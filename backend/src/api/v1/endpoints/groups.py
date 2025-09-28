@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import httpx
+import urllib
 import os
 import shutil
 import tempfile
@@ -24,7 +26,6 @@ from src.core.configs import configs
 store = AsyncLocalJsonFileStoreAiofiles(JsonFileStoreConfig(base_dir=configs.dirs.store))
 
 groups_router = APIRouter(prefix="/groups", tags=["Groups"])
-
 
 @groups_router.post("/upload-zip", response_model=GroupOut, status_code=http.HTTP_201_CREATED)
 async def upload_zip(
@@ -75,6 +76,14 @@ async def upload_zip(
             "created_at": now_iso(),
         }
         await atomic_write_json(group_dir_status(group_uuid) / f"{file_uuid}.json", status_doc)
+        try:
+            query = urllib.parse.urlencode( 
+                    {"source": f"/out/var/data/groups/{group_uuid}/raw_data/",
+                    "dst": f"/out/var/data/groups/{group_uuid}/process/"}
+                    )
+            httpx.get(f"http://ml-pipeline:8080/?{query}")
+        except Exception as e:
+            print(f'Errors: {e}')
         await store.create(f"files/{file_uuid}", status_doc, overwrite=True)
 
     # индекс группы

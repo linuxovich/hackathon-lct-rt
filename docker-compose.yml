@@ -1,32 +1,26 @@
-version: '3.8'
-
 services:
   # ML Pipeline service - запускается только по требованию
   ml-pipeline:
-    build: .
+    build: ./ml
     container_name: hackaton-ml-pipeline
     volumes:
-      - ./source:/app/source:ro
-      - ./destination:/app/destination:rw
+      - ./backend:/out
       - ml-pipeline-storage:/app/local_storage
     environment:
       - OMP_NUM_THREADS=4
       - PYTHONUNBUFFERED=1
-    # Don't start automatically - only run when explicitly called
-    profiles: ["manual"]
 
-  # TODO: Добавить основной бэкенд сервис
-  # backend:
-  #   build: ./backend
-  #   container_name: hackaton-backend
-  #   ports:
-  #     - "8000:8000"
-  #   volumes:
-  #     - ./backend:/app
-  #   environment:
-  #     - ML_PIPELINE_SERVICE=ml-pipeline
-  #   depends_on:
-  #     - ml-pipeline
+  backend:
+     build: ./backend
+     container_name: hackaton-backend
+     command: python -m uvicorn main:application --host 0.0.0.0
+     ports:
+       - "8000:8000"
+     volumes:
+       - /var/run/docker.sock:/var/run/docker.sock
+       - ./backend:/app
+     environment:
+       - ML_PIPELINE_SERVICE=ml-pipeline
 
 volumes:
   ml-pipeline-storage:
