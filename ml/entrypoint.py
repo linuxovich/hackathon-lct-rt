@@ -7,11 +7,13 @@ Handles source and destination parameters for batch processing.
 import os
 import sys
 import argparse
+from threading import Thread
 import json
 from pathlib import Path
 from typing import List, Dict, Any
 import cv2
 import numpy as np
+from aiohttp import web
 
 from storage_manager import LocalStorageManager
 from pipeline_processor import PipelineProcessor
@@ -106,57 +108,47 @@ def save_result_to_destination(result: Dict[str, Any], scan_id: str, destination
     
     return str(json_path)
 
-
-def main():
-    """Main entrypoint function."""
-    try:
-        # Parse command line arguments
-        args = parse_arguments()
-        
-        print(f"Source directory: {args.source}")
-        print(f"Destination directory: {args.destination}")
-        
-        # Find image files
-        image_files = find_image_files(args.source)
-        
-        if not image_files:
-            print(f"No image files found in {args.source}")
-            return 1
-        
-        print(f"Found {len(image_files)} image files to process")
-        
-        # Initialize components
-        storage_manager = LocalStorageManager()
-        pipeline_processor = PipelineProcessor()
-        
-        # Process each image
-        successful_count = 0
-        failed_count = 0
-        
-        for i, image_path in enumerate(image_files):
-            try:
-                # Generate scan ID from filename
-                image_filename = Path(image_path).stem
-                scan_id = f"{image_filename}_{i:03d}"
-                
-                print(f"\nProcessing {i+1}/{len(image_files)}: {image_path}")
-                
-                # Process the image
-                result = process_single_image(
-                    image_path, scan_id, storage_manager, 
-                    pipeline_processor
-                )
-                
-                # Save result to destination directory
-                output_path = save_result_to_destination(result, scan_id, args.destination)
-                print(f"Result saved to: {output_path}")
-                
-                successful_count += 1
-                
-            except Exception as e:
-                print(f"Failed to process {image_path}: {str(e)}")
-                failed_count += 1
-                continue
+def start_image_processing(source, dst):
+    image_files = find_image_files(source)
+    
+    if not image_files:
+        print(f"No image files found in {source}")
+        return 1
+    
+    print(f"Found {len(image_files)} image files to process")
+    
+    # Initialize components
+    storage_manager = LocalStorageManager()
+    pipeline_processor = PipelineProcessor()
+    
+    # Process each image
+    successful_count = 0
+    failed_count = 0
+    
+    for i, image_path in enumerate(image_files):
+        try:
+            # Generate scan ID from filename
+            image_filename = Path(image_path).stem
+            scan_id = f"{image_filename}_{i:03d}"
+            
+            print(f"\nProcessing {i+1}/{len(image_files)}: {image_path}")
+            
+            # Process the image
+            result = process_single_image(
+                image_path, scan_id, storage_manager, 
+                pipeline_processor
+            )
+            
+            # Save result to destination directory
+            output_path = save_result_to_destination(result, scan_id, dst)
+            print(f"Result saved to: {output_path}")
+            
+            successful_count += 1
+            
+        except Exception as e:
+            print(f"Failed to process {image_path}: {str(e)}")
+            failed_count += 1
+            continue
         
         # Print summary
         print(f"\nProcessing complete!")
@@ -166,10 +158,27 @@ def main():
         
         return 0 if failed_count == 0 else 1
         
+
+def main(request):
+    """Main entrypoint function."""
+    try:
+        # Parse command line arguments
+        # args = parse_arguments()
+        source = request.query.get('source')
+        dst = request.query.get('dst')
+
+        thread = Thread(target = start_image_processing, args = (source, dst))
+        thread.start()
+        print(f"Source directory: {source}")
+        print(f"Destination directory: {dst}")
+        
+        # Find image files
+
     except Exception as e:
         print(f"Fatal error: {str(e)}")
         return 1
 
-
 if __name__ == "__main__":
-    sys.exit(main())
+    app = web.Application()
+    app.add_routes([web.get('/', main)])
+    web.run_app(app)
