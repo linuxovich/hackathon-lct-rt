@@ -922,7 +922,7 @@ onBeforeUnmount(() => {
             </div>
             <div v-if="editingState.groupIndex !== groupIndex" class="group-actions">
               <!-- Кнопка добавления файлов в группу -->
-              <div
+              <!-- <div
                 class="add-files-btn-wrapper"
                 @mouseenter="showAddFilesTooltipHandler(groupIndex)"
                 @mouseleave="hideAddFilesTooltip()"
@@ -935,7 +935,6 @@ onBeforeUnmount(() => {
                 >
                   <div class="add-files-icon-container">
                     <IconPlus class="add-files-icon" />
-                    <!-- Индикатор загрузки в виде кольца -->
                     <div
                       v-if="groupUploadingStates[groupIndex]"
                       class="loading-ring"
@@ -950,7 +949,7 @@ onBeforeUnmount(() => {
                 >
                   Добавить файлы в группу
                 </div>
-              </div>
+              </div> -->
 
               <div
                 v-if="isGroupReadyForReport(groupIndex)"
