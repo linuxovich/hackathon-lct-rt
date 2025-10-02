@@ -1,3 +1,4 @@
+import re
 import asyncio
 import json
 import os
@@ -7,11 +8,18 @@ import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
-from typing import List
+from typing import List, Optional
 
 from fastapi import UploadFile
 
+
 from src.core.configs import configs
+
+from src.infra.storage.local_storage import AsyncLocalJsonFileStoreAiofiles, JsonFileStoreConfig
+from src.core.configs import configs
+
+
+store = AsyncLocalJsonFileStoreAiofiles(JsonFileStoreConfig(base_dir=configs.dirs.store))
 
 # --------- ID/время ---------
 
@@ -51,7 +59,7 @@ def ensure_group_dirs(group_uuid: str) -> None:
         d.mkdir(parents=True, exist_ok=True)
 
 def stage_dir(group_uuid: str, stage: str) -> Path:
-    return group_dir_final(group_uuid) if stage == "final" else group_dir_process(group_uuid)
+    return group_dir_final(group_uuid) if stage == "done" else group_dir_process(group_uuid)
 
 # --------- macOS-мусор и фильтры ---------
 
@@ -130,3 +138,43 @@ async def read_json_file(path: Path):
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
     return await asyncio.to_thread(_read)
+
+# --- Нормализация имён ---
+
+_RESULT_SUFFIX = re.compile(r"(?:_result)?$", re.IGNORECASE)
+_TRAIL_IDX     = re.compile(r"_(\d{3,})$")
+
+def _normalize_to_stem(name: str) -> str:
+    """
+    Принимаем:
+      - 'photo_2025-09-26_19-16-37_000_result.json'
+    Возвращаем:
+      - 'photo_2025-09-26_19-16-37'
+    """
+    stem = Path(name).stem                # → 'photo_..._000_result'
+    stem = _RESULT_SUFFIX.sub("", stem)   # срежем '_result'
+    stem = _TRAIL_IDX.sub("", stem)       # срежем '_000' (или '_0012' и т.п.)
+    return stem.casefold()
+
+
+async def _resolve_fid_by_filename(group_uuid: str, filename: str) -> Optional[str]:
+    idx_key = f"group_index/{group_uuid}"
+    target_stem = _normalize_to_stem(filename)
+
+    if await store.exists(idx_key):
+        idx = await store.read(idx_key)
+        candidates = idx.get("files", [])
+    else:
+        candidates = []
+
+    # Обходим все файл-меты группы
+    for fid in candidates:
+        meta = await store.read(f"files/{fid}")
+        src_name = (meta.get("filename") or meta.get("original_name") or "").strip()
+        if not src_name:
+            continue
+        meta_stem = _normalize_to_stem(src_name)
+        # точное совпадение стемов или "результат" начинается со стема исходника
+        if target_stem == meta_stem or target_stem.startswith(meta_stem) or meta_stem.startswith(target_stem):
+            return fid
+    return None

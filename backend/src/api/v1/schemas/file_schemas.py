@@ -5,7 +5,11 @@ from pydantic import BaseModel, Field
 
 class FileStatus(str, enum.Enum):
     progress = "progress"
+    upgrading = "upgrading"
     done = "done"
+
+class FileStatusModel(BaseModel):
+    status: FileStatus 
 
 class FileOut(BaseModel):
     file_uuid: str
