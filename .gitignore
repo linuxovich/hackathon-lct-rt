@@ -85,3 +85,14 @@ Thumbs.db
 
 *.pt
 *.pth
+
+*.png
+*.txt
+*.json
+*.jpg
+*.zip
+*.safetensors
+*.zip
+*.tar
+*.tar.gz
+*.JPG
