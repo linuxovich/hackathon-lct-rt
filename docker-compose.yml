@@ -1,8 +1,8 @@
 services:
-  # ML Pipeline service - запускается только по требованию
   ml-pipeline:
     build: ./ml
     container_name: hackaton-ml-pipeline
+    restart: unless-stopped
     volumes:
       - ./backend:/out
       - ml-pipeline-storage:/app/local_storage
@@ -12,6 +12,7 @@ services:
 
   backend:
      build: ./backend
+     restart: unless-stopped
      container_name: hackaton-backend
      command: python -m uvicorn main:application --host 0.0.0.0
      ports:
@@ -21,6 +22,68 @@ services:
        - ./backend:/app
      environment:
        - ML_PIPELINE_SERVICE=ml-pipeline
+       - QUEUE_AMQP_URL=amqp://appuser:supersecret@rabbit:5672/%2F
+
+  rabbit:
+    image: rabbitmq:3.13-management
+    restart: unless-stopped
+    ports:
+      - "5672:5672"     # AMQP
+      - "15672:15672"   # веб-UI
+    environment:
+      RABBITMQ_DEFAULT_USER: appuser
+      RABBITMQ_DEFAULT_PASS: supersecret
+      RABBITMQ_DEFAULT_VHOST: /
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  worker:
+    build: ./backend
+    restart: unless-stopped
+    depends_on:
+      rabbit:
+        condition: service_healthy
+    environment:
+      - QUEUE_AMQP_URL=amqp://appuser:supersecret@rabbit:5672/%2F
+      - ML_PIPELINE__URL=http://ml-pipeline:8080
+      - BACKEND_BASE_URL=http://backend:8000
+    command: >
+       sh -c "python -c 'import src.tasks.ml_tasks as _' &&
+         dramatiq src.tasks.ml_tasks --processes 1 --threads 4"
+
+  postprocessing:
+    restart: unless-stopped
+    build: ./postprocessing
+    volumes:
+      - ./backend/var:/out/var
+    environment:
+      - LLM_MODEL=infidelis/GigaChat-20B-A3B-instruct-v1.5:q4_K_M
+      - LLM_BASE_URL=http://gigachat:11434
+    depends_on:
+      - gigachat
+
+  gigachat:
+    build:
+      context: ./postprocessing
+      dockerfile: Dockerfile.llm
+    restart: unless-stopped
+    container_name: gigachat
+    volumes:
+      - ./gigachat:/root/.ollama
+    environment:
+      - OLLAMA_NUM_THREADS=64
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "8354:80"
+    container_name: frontend-app
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
 
 volumes:
   ml-pipeline-storage:
