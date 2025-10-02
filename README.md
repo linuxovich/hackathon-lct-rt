@@ -8,7 +8,7 @@ git clone https://github.com/linuxovich/hackathon-lct-rt.git
 2. Перейдите в папку
 
 ```
-cd 
+cd hackathon-lct-rt
 ```
 
 3. Скопируйте `.env.example` → `.env.dev` и заполните
