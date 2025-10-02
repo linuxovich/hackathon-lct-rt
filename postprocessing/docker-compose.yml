@@ -1,0 +1,24 @@
+services:
+  postprocessing:
+    build:
+      context: .
+    ports:
+      - 8889:8000
+    volumes:
+      - .:/app
+    environment:
+      - LLM_MODEL=infidelis/GigaChat-20B-A3B-instruct-v1.5:q4_K_M
+      - LLM_BASE_URL=http://gigachat:11434
+      - PORT=8889
+    depends_on:
+      - gigachat
+
+  gigachat:
+    build:
+      context: .
+      dockerfile: Dockerfile.llm
+    container_name: gigachat
+    ports:
+      - 8888:11434
+    volumes:
+      - ./gigachat:/root/.ollama

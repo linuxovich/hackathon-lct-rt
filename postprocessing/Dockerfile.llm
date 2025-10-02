@@ -1,0 +1,9 @@
+FROM ollama/ollama:latest
+
+ENV OLLAMA_MODEL="infidelis/GigaChat-20B-A3B-instruct-v1.5:q4_K_M" 
+
+COPY ollama_entrypoint.sh /usr/local/bin/ollama_entrypoint.sh
+RUN chmod +x /usr/local/bin/ollama_entrypoint.sh
+
+ENTRYPOINT ["/usr/local/bin/ollama_entrypoint.sh"]
+CMD ["ollama", "serve"] 

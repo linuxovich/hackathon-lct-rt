@@ -1,0 +1,14 @@
+[project]
+name = "hakaton-postprocessing"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "aiofiles>=24.1.0",
+    "aiohttp>=3.12.15",
+    "langchain-ollama>=0.3.8",
+    "pydantic>=2.11.9",
+    "pydantic-core>=2.33.2",
+    "pydantic-settings>=2.11.0",
+]
