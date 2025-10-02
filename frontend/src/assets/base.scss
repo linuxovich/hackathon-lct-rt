@@ -1,0 +1,26 @@
+@use './variables.scss' as *;
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  transition: all 0.2s ease-in-out;
+
+  padding: 0;
+  margin: 0;
+}
+
+body {
+  color: $text-color;
+  background: $bg-color;
+  font-family: $font-family;
+  line-height: 1.6;
+  font-size: 16px;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+
+  // padding: 30px;
+}

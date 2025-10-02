@@ -1,0 +1,11 @@
+version: "3.3"
+
+services:
+  frontend:
+    build: ./frontend
+    ports:
+      - "8354:80"
+    container_name: frontend-app
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
