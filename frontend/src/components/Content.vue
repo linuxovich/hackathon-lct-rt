@@ -212,6 +212,12 @@ watch(
         // Обрабатываем lines
         if (region.lines) {
           region.lines.forEach((line) => {
+            // Фильтруем пустые строки и строки с дефисом - пропускаем строки с пустым, только пробельными символами или дефисом
+            const text = line.text || '';
+            if (text.trim() === '' || text.trim() === '-') {
+              return; // Пропускаем пустые строки и строки с дефисом
+            }
+
             const originalCoords = line.coordinates?.original;
             if (originalCoords) {
               const parsedCoords = parseCoordinates(originalCoords);
@@ -221,7 +227,7 @@ watch(
                   x: (coord.x / width) * 100,
                   y: (coord.y / height) * 100,
                 })),
-                text: line.text || '',
+                text: text,
                 regionIndex: regionIndex,
               });
             } else {
@@ -229,7 +235,7 @@ watch(
               allLines.push({
                 id: line.id,
                 coords: [],
-                text: line.text || '',
+                text: text,
                 regionIndex: regionIndex,
               });
             }
