@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, nextTick } from 'vue';
+import { ref, nextTick, watch } from 'vue';
 
 interface Props {
   text: string;
@@ -46,6 +46,18 @@ const cancelEditing = () => {
   editText.value = props.text;
   emit('cancel-editing');
 };
+
+// Watcher для отслеживания изменения isEditing извне
+watch(() => props.isEditing, (newValue) => {
+  if (newValue) {
+    // Когда редактирование запускается извне (например, при клике на баундинг бокс)
+    editText.value = props.text;
+    nextTick(() => {
+      textareaRef.value?.focus();
+      adjustTextareaHeight();
+    });
+  }
+});
 </script>
 
 <template>

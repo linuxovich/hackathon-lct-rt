@@ -35,6 +35,11 @@ const effectiveHoveredIndex = computed(() => {
   return imageHoveredIndex.value;
 });
 
+// Computed свойство для определения, заблокированы ли элементы
+const isInteractionBlocked = computed(() => {
+  return editingIndex.value !== null;
+});
+
 // Функция для плавной прокрутки к элементу
 const scrollToElement = (index: number) => {
   const textSection = document.querySelector('.text-section');
@@ -266,19 +271,15 @@ watch(
 watch(
   () => fileStore.selectedFileUuid,
   (newFileUuid) => {
-    console.log('Выбран файл:', newFileUuid);
-
     // Закрываем редактирование при смене файла
     editingIndex.value = null;
     hoveredIndex.value = null;
 
     if (newFileUuid) {
-      console.log('Начинаем загрузку контента');
       isImageLoading.value = true;
       imageLoadError.value = false;
       // Контент будет загружен из LeftMenu.vue с правильным статусом
     } else {
-      console.log('Файл не выбран, сбрасываем состояние');
       // Сбрасываем состояние при отмене выбора файла
       isImageLoading.value = false;
       imageLoadError.value = false;
@@ -288,7 +289,6 @@ watch(
 
 // Обработчики для изображения
 const handleImageLoad = (event: Event) => {
-  console.log('Изображение загружено');
   isImageLoading.value = false;
   imageLoadError.value = false;
 
@@ -301,7 +301,6 @@ const handleImageLoad = (event: Event) => {
 };
 
 const handleImageError = () => {
-  console.log('Ошибка загрузки изображения');
   isImageLoading.value = false;
   imageLoadError.value = true;
 };
@@ -372,6 +371,34 @@ const finishEditing = () => {
   editingIndex.value = null;
 };
 
+// Функция для обработки клика по красному баундинг боксу
+const handleBoundingBoxClick = () => {
+  // Если уже редактируется, блокируем клики
+  if (editingIndex.value !== null) {
+    return;
+  }
+
+  // Определяем индекс элемента, который соответствует текущему highlightedCoords
+  if (effectiveHoveredIndex.value !== null) {
+    startEditing(effectiveHoveredIndex.value);
+  } else {
+    // Если нет активного hover, но есть highlightedCoords,
+    // значит пользователь кликнул по баундинг боксу напрямую
+    // В этом случае нужно найти соответствующий элемент по координатам
+    if (highlightedCoords.value.length > 0) {
+      // Ищем элемент, который соответствует текущим highlightedCoords
+      for (let i = 0; i < processedContent.value.length; i++) {
+        const item = processedContent.value[i];
+        if (item.coords.length > 0 &&
+            JSON.stringify(item.coords) === JSON.stringify(highlightedCoords.value)) {
+          startEditing(i);
+          return;
+        }
+      }
+    }
+  }
+};
+
 // Функция для отправки обновленного контента на сервер
 const saveContentToServer = async () => {
   if (!fileStore.content || !fileStore.selectedFileUuid) {
@@ -380,7 +407,6 @@ const saveContentToServer = async () => {
   }
 
   if (isSaving.value) {
-    console.log('Сохранение уже в процессе...');
     return;
   }
 
@@ -390,16 +416,10 @@ const saveContentToServer = async () => {
     const file_uuid = fileStore.selectedFileUuid;
     const stage = 'done';
 
-    console.log('Отправляем PUT запрос для сохранения изменений...');
-    console.log('File UUID:', file_uuid);
-    console.log('Stage:', stage);
-
-    const response = await client.put(
+    await client.put(
       `/api/v1/files/${file_uuid}/content?stage=${stage}`,
       fileStore.content,
     );
-
-    console.log('Изменения успешно сохранены:', response.data);
   } catch (error) {
     console.error('Ошибка при сохранении изменений:', error);
     // Можно добавить уведомление пользователю об ошибке
@@ -435,6 +455,11 @@ const isPointInPolygon = (point: { x: number; y: number }, polygon: Array<{ x: n
 
 // Функции для обработки наведения на изображение
 const handleImageMouseMove = (event: MouseEvent) => {
+  // Если идет редактирование, блокируем обработку наведения
+  if (editingIndex.value !== null) {
+    return;
+  }
+
   const imageContainer = event.currentTarget as HTMLElement;
   const rect = imageContainer.getBoundingClientRect();
 
@@ -652,6 +677,7 @@ onUnmounted(() => {
                   highlightedRegionIndex !== undefined &&
                   highlightedRegionIndex < regionsContent.length
                 "
+                style="pointer-events: none;"
               >
                 <polygon
                   v-if="regionsContent[highlightedRegionIndex]?.coords.length > 2"
@@ -683,6 +709,8 @@ onUnmounted(() => {
                       .join(' ')
                   "
                   fill="rgba(255, 68, 68, 0.2)"
+                  @click="handleBoundingBoxClick"
+                  :style="`cursor: ${isInteractionBlocked ? 'default' : 'pointer'};`"
                 />
 
                 <!-- Линии между соседними точками -->
@@ -694,6 +722,8 @@ onUnmounted(() => {
                   stroke-width="3"
                   fill="none"
                   stroke-linecap="round"
+                  @click="handleBoundingBoxClick"
+                  :style="`cursor: ${isInteractionBlocked ? 'default' : 'pointer'};`"
                 />
 
                 <!-- Линия от последней точки к первой (замыкание контура) -->
@@ -704,6 +734,8 @@ onUnmounted(() => {
                   stroke-width="3"
                   fill="none"
                   stroke-linecap="round"
+                  @click="handleBoundingBoxClick"
+                  :style="`cursor: ${isInteractionBlocked ? 'default' : 'pointer'};`"
                 />
               </g>
             </svg>
@@ -1003,7 +1035,6 @@ onUnmounted(() => {
   left: 0;
   bottom: 0;
   right: 0;
-  pointer-events: none;
   z-index: 5;
 }
 
