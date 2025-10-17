@@ -5,7 +5,7 @@ interface Props {
   text: string;
   isHovered: boolean;
   isEditing: boolean;
-  documentStatus?: string;
+  isSaving?: boolean;
 }
 
 interface Emits {
@@ -23,11 +23,6 @@ const editText = ref('');
 const textareaRef = ref<HTMLTextAreaElement>();
 
 const startEditing = () => {
-  // Блокируем редактирование если статус документа не 'done'
-  if (props.documentStatus && props.documentStatus !== 'done') {
-    return;
-  }
-
   emit('start-editing');
   editText.value = props.text;
   nextTick(() => {
@@ -44,11 +39,7 @@ const adjustTextareaHeight = () => {
 };
 
 const saveChanges = () => {
-  console.log('TextItem: saveChanges вызвана, новый текст:', editText.value);
-  console.log('TextItem: editText.value:', editText.value);
-  console.log('TextItem: props.text:', props.text);
   emit('update:text', editText.value);
-  console.log('TextItem: событие update:text отправлено');
 };
 
 const cancelEditing = () => {
@@ -60,14 +51,10 @@ const cancelEditing = () => {
 <template>
   <div
     class="text-item"
-    :class="{
-      hovered: isHovered,
-      editing: isEditing,
-      disabled: documentStatus && documentStatus !== 'done',
-    }"
+    :class="{ hovered: isHovered, editing: isEditing }"
     @mouseenter="!isEditing && $emit('mouseenter')"
     @mouseleave="!isEditing && $emit('mouseleave')"
-    @click="!isEditing && (documentStatus === 'done' || !documentStatus) && startEditing()"
+    @click="!isEditing && startEditing()"
   >
     <!-- Режим просмотра -->
     <div v-if="!isEditing" class="text-content">
@@ -80,38 +67,25 @@ const cancelEditing = () => {
         ref="textareaRef"
         v-model="editText"
         class="edit-textarea"
-        @keydown.enter.ctrl="
-          () => {
-            console.log('Ctrl+Enter нажато!');
-            saveChanges();
-          }
-        "
+        @keydown.enter.ctrl="saveChanges"
         @keydown.escape="cancelEditing"
         @input="adjustTextareaHeight"
       ></textarea>
       <div class="edit-buttons">
         <button
           class="save-btn"
-          @click.stop="
-            () => {
-              console.log('Кнопка Сохранить нажата!');
-              saveChanges();
-            }
-          "
+          :class="{ saving: isSaving }"
+          :disabled="isSaving"
+          @click.stop="saveChanges"
           title="Сохранить (Ctrl+Enter)"
         >
-          Сохранить
+          <span v-if="!isSaving">Сохранить</span>
+          <span v-else class="saving-text">
+            <span class="saving-spinner"></span>
+            Сохранение...
+          </span>
         </button>
-        <button
-          class="cancel-btn"
-          @click.stop="
-            () => {
-              console.log('Кнопка Отменить нажата!');
-              cancelEditing();
-            }
-          "
-          title="Отменить (Esc)"
-        >
+        <button class="cancel-btn" @click.stop="cancelEditing" title="Отменить (Esc)">
           Отменить
         </button>
       </div>
@@ -139,17 +113,6 @@ const cancelEditing = () => {
     border-color: #2196f3;
     cursor: default;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-  }
-
-  &.disabled {
-    cursor: not-allowed;
-    opacity: 0.6;
-    background: #f5f5f5;
-
-    &:hover {
-      background: #f5f5f5;
-      border-color: transparent;
-    }
   }
 }
 
@@ -212,15 +175,50 @@ const cancelEditing = () => {
   color: white;
   box-shadow: 0 2px 4px rgba(76, 175, 80, 0.3);
 
-  &:hover {
+  &:hover:not(:disabled) {
     background: linear-gradient(135deg, #45a049, #3d8b40);
     transform: translateY(-1px);
     box-shadow: 0 4px 8px rgba(76, 175, 80, 0.4);
   }
 
-  &:active {
+  &:active:not(:disabled) {
     transform: translateY(0);
     box-shadow: 0 2px 4px rgba(76, 175, 80, 0.3);
+  }
+
+  &.saving {
+    background: linear-gradient(135deg, #9e9e9e, #757575);
+    cursor: not-allowed;
+    opacity: 0.8;
+  }
+
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.8;
+  }
+}
+
+.saving-text {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.saving-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top: 2px solid white;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
   }
 }
 

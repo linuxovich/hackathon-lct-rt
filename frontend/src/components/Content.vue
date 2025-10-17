@@ -23,6 +23,7 @@ const imageLoadError = ref(false);
 
 const hoveredIndex = ref<number | null>(null);
 const editingIndex = ref<number | null>(null);
+const isSaving = ref(false);
 const imageWrapperWidth = ref(0);
 const imageWrapperHeight = ref(0);
 const imageNaturalWidth = ref(0);
@@ -43,10 +44,10 @@ const magnifierScale = 2; // коэффициент увеличения
 // Преобразуем координаты один раз при загрузке
 const processedContent = ref<
   Array<{
+    id: string;
     coords: Array<{ x: number; y: number }>;
     text: string;
     regionIndex?: number;
-    lineId?: string;
   }>
 >([]);
 
@@ -134,10 +135,10 @@ watch(
 
       // Собираем все lines из всех regions
       const allLines: Array<{
+        id: string;
         coords: Array<{ x: number; y: number }>;
         text: string;
         regionIndex: number;
-        lineId: string;
       }> = [];
       const allRegions: Array<{ coords: Array<{ x: number; y: number }>; text: string }> = [];
 
@@ -149,21 +150,21 @@ watch(
             if (originalCoords) {
               const parsedCoords = parseCoordinates(originalCoords);
               allLines.push({
+                id: line.id,
                 coords: parsedCoords.map((coord) => ({
                   x: (coord.x / width) * 100,
                   y: (coord.y / height) * 100,
                 })),
                 text: line.text || '',
                 regionIndex: regionIndex,
-                lineId: line.id,
               });
             } else {
               // Если нет координат, добавляем без них
               allLines.push({
+                id: line.id,
                 coords: [],
                 text: line.text || '',
                 regionIndex: regionIndex,
-                lineId: line.id,
               });
             }
           });
@@ -269,83 +270,28 @@ const highlightedRegionIndex = computed(() => {
   return null;
 });
 
-// Функция для обновления контента на сервере
-const updateFileContentOnServer = async (newText: string, lineIndex: number) => {
-  console.log(
-    'Content: updateFileContentOnServer вызвана, newText:',
-    newText,
-    'lineIndex:',
-    lineIndex,
-  );
-  if (!fileStore.content || !fileStore.selectedFileUuid) {
-    console.error('Нет данных для обновления');
-    return;
-  }
-
-  try {
-    // Создаем копию текущего контента
-    const updatedContent = JSON.parse(JSON.stringify(fileStore.content));
-
-    console.log('Debug: updatedContent.json.regions.length:', updatedContent.json.regions.length);
-    console.log('Debug: processedContent.value.length:', processedContent.value.length);
-    console.log('Debug: processedContent.value:', processedContent.value);
-
-    // Находим соответствующий line в JSON структуре
-    const processedItem = processedContent.value[lineIndex];
-    console.log('Debug: processedItem:', processedItem);
-    if (!processedItem || processedItem.regionIndex === undefined) {
-      console.error('Не удалось найти соответствующий элемент');
-      return;
-    }
-
-    const regionIndex = processedItem.regionIndex;
-    const region = updatedContent.json.regions[regionIndex];
-
-    if (!region || !region.lines) {
-      console.error('Не удалось найти region или lines');
-      return;
-    }
-
-    // Находим соответствующий line в region.lines по ID
-    const lineId = processedItem.lineId;
-    console.log('Debug: ищем line с ID:', lineId);
-    console.log('Debug: region.lines:', region.lines);
-
-    const lineToUpdate = region.lines.find(
-      (line: { id: string; text: string }) => line.id === lineId,
-    );
-
-    if (lineToUpdate) {
-      console.log('Debug: найден line для обновления:', lineToUpdate);
-      // Обновляем текст в соответствующем line
-      lineToUpdate.text = newText;
-
-      // Также обновляем concatenated_text для region, если нужно
-      region.concatenated_text = region.lines.map((line: { text: string }) => line.text).join(' ');
-
-      console.log('Отправляем обновленный контент на сервер:', updatedContent);
-
-      // Отправляем PUT запрос
-      await fileStore.updateFileContent(fileStore.selectedFileUuid, updatedContent);
-
-      console.log('Контент успешно обновлен на сервере');
-    } else {
-      console.error('Не удалось найти line с ID:', lineId, 'в region');
-    }
-  } catch (error) {
-    console.error('Ошибка при обновлении контента:', error);
-    // Можно добавить уведомление пользователю об ошибке
-  }
-};
-
 // Функция для обновления текста элемента
 const updateItemText = async (index: number, newText: string) => {
-  console.log('Content: updateItemText вызвана, index:', index, 'newText:', newText);
-  if (processedContent.value[index]) {
-    processedContent.value[index].text = newText;
+  if (processedContent.value[index] && fileStore.content) {
+    const item = processedContent.value[index];
 
-    // Обновляем JSON структуру и отправляем PUT запрос
-    await updateFileContentOnServer(newText, index);
+    // Обновляем текст в processedContent
+    item.text = newText;
+
+    // Находим и обновляем соответствующий line в JSON
+    const regionIndex = item.regionIndex;
+    if (regionIndex !== undefined && fileStore.content.json.regions[regionIndex]) {
+      const region = fileStore.content.json.regions[regionIndex];
+      const lineIndex = region.lines.findIndex((line) => line.id === item.id);
+
+      if (lineIndex !== -1) {
+        // Обновляем текст в JSON
+        region.lines[lineIndex].text = newText;
+
+        // Отправляем PUT запрос для сохранения изменений
+        await saveContentToServer();
+      }
+    }
   }
 };
 
@@ -359,6 +305,48 @@ const startEditing = (index: number) => {
 const finishEditing = () => {
   editingIndex.value = null;
 };
+
+// Функция для отправки обновленного контента на сервер
+const saveContentToServer = async () => {
+  if (!fileStore.content || !fileStore.selectedFileUuid) {
+    console.error('Нет данных для сохранения');
+    return;
+  }
+
+  if (isSaving.value) {
+    console.log('Сохранение уже в процессе...');
+    return;
+  }
+
+  isSaving.value = true;
+
+  try {
+    const file_uuid = fileStore.selectedFileUuid;
+    const stage = 'done';
+
+    console.log('Отправляем PUT запрос для сохранения изменений...');
+    console.log('File UUID:', file_uuid);
+    console.log('Stage:', stage);
+
+    const response = await client.put(
+      `/api/v1/files/${file_uuid}/content?stage=${stage}`,
+      fileStore.content,
+    );
+
+    console.log('Изменения успешно сохранены:', response.data);
+  } catch (error) {
+    console.error('Ошибка при сохранении изменений:', error);
+    // Можно добавить уведомление пользователю об ошибке
+    alert('Ошибка при сохранении изменений. Попробуйте еще раз.');
+  } finally {
+    isSaving.value = false;
+  }
+};
+
+// Вспомогательная функция для поиска элемента по оригинальному ID
+// const findItemById = (id: string) => {
+//   return processedContent.value.find(item => item.id === id);
+// };
 
 // Функции для увеличителя
 const handleImageMouseMove = (event: MouseEvent) => {
@@ -656,20 +644,19 @@ onUnmounted(() => {
           :text="item.text"
           :is-hovered="hoveredIndex === index"
           :is-editing="editingIndex === index"
-          :document-status="selectedDocumentStatus || undefined"
+          :is-saving="isSaving"
           @mouseenter="editingIndex === null && (hoveredIndex = index)"
           @mouseleave="editingIndex === null && (hoveredIndex = null)"
           @start-editing="startEditing(index)"
           @update:text="
             async (newText) => {
-              console.log(
-                'Content: обработчик @update:text вызван, index:',
-                index,
-                'newText:',
-                newText,
-              );
-              await updateItemText(index, newText);
-              finishEditing();
+              try {
+                await updateItemText(index, newText);
+                finishEditing();
+              } catch (error) {
+                console.error('Ошибка при обновлении текста:', error);
+                // Ошибка уже обработана в updateItemText
+              }
             }
           "
           @cancel-editing="finishEditing()"
