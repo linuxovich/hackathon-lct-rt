@@ -94,14 +94,23 @@ const imageDisplayHeight = ref(0);
 const imageAspectRatio = ref(1);
 const imageOffsetX = ref(0);
 const imageOffsetY = ref(0);
-// Удаляем переменные для лупы
-// const isMagnifierVisible = ref(false);
-// const magnifierX = ref(0);
-// const magnifierY = ref(0);
-// const magnifierRelativeX = ref(0);
-// const magnifierRelativeY = ref(0);
-// const magnifierSize = 259; // размер увеличителя
-// const magnifierScale = 2; // коэффициент увеличения
+
+// Переменные для автоматического масштабирования
+const imageScale = ref(1);
+const imageTranslateX = ref(0);
+const imageTranslateY = ref(0);
+const isZoomed = ref(false);
+const originalTransform = ref('');
+
+// Переменные для масштабирования SVG баундинг боксов
+const svgScale = ref(1);
+const svgTranslateX = ref(0);
+const svgTranslateY = ref(0);
+
+// Переменные для управления толщиной обводки
+const strokeWidth = ref(3); // Базовая толщина обводки
+const baseStrokeWidth = 3; // Исходная толщина обводки
+const showStroke = ref(true); // Показывать ли обводку
 
 // Добавляем переменные для подсветки баундинг боксов
 const hoveredBoundingBox = ref<number | null>(null);
@@ -281,6 +290,9 @@ watch(
     editingIndex.value = null;
     hoveredIndex.value = null;
 
+    // Сбрасываем масштабирование при смене файла
+    resetImageZoom();
+
     if (newFileUuid) {
       isImageLoading.value = true;
       imageLoadError.value = false;
@@ -370,11 +382,29 @@ const startEditing = (index: number) => {
   editingIndex.value = index;
   hoveredIndex.value = null; // Сбрасываем hover при начале редактирования
   imageHoveredIndex.value = null; // Сбрасываем наведение на изображение
+
+  // Применяем автоматическое масштабирование для редактируемого фрагмента
+  const item = processedContent.value[index];
+  if (item && item.coords.length > 0) {
+    const zoomParams = calculateZoomForFragment(item.coords);
+    applyImageZoom(zoomParams.scale, zoomParams.translateX, zoomParams.translateY);
+
+    // Также применяем масштабирование к SVG баундинг боксам
+    applySvgZoom(zoomParams.scale, zoomParams.translateX, zoomParams.translateY);
+
+    // Сохраняем параметры масштабирования
+    imageScale.value = zoomParams.scale;
+    imageTranslateX.value = zoomParams.translateX;
+    imageTranslateY.value = zoomParams.translateY;
+  }
 };
 
 // Функция для завершения редактирования
 const finishEditing = () => {
   editingIndex.value = null;
+
+  // Сбрасываем масштабирование при завершении редактирования
+  resetImageZoom();
 };
 
 // Функция для обработки клика по красному баундинг боксу
@@ -528,6 +558,132 @@ const handleImageMouseLeave = () => {
   hoveredBoundingBox.value = null;
   hoveredLineIndex.value = null;
   imageHoveredIndex.value = null;
+};
+
+// Функция для расчета центра и масштаба редактируемого фрагмента
+const calculateZoomForFragment = (coords: Array<{ x: number; y: number }>) => {
+  if (coords.length === 0) return { scale: 1, translateX: 0, translateY: 0 };
+
+  // Находим границы фрагмента
+  const minX = Math.min(...coords.map(coord => coord.x));
+  const maxX = Math.max(...coords.map(coord => coord.x));
+  const minY = Math.min(...coords.map(coord => coord.y));
+  const maxY = Math.max(...coords.map(coord => coord.y));
+
+  // Рассчитываем размеры фрагмента
+  const fragmentWidth = maxX - minX;
+  const fragmentHeight = maxY - minY;
+  const fragmentCenterX = (minX + maxX) / 2;
+  const fragmentCenterY = (minY + maxY) / 2;
+
+  // Рассчитываем размеры контейнера изображения
+  const imageWrapper = document.querySelector('.image-wrapper') as HTMLElement;
+  if (!imageWrapper) return { scale: 1, translateX: 0, translateY: 0 };
+
+  const containerWidth = imageWrapper.offsetWidth;
+  const containerHeight = imageWrapper.offsetHeight;
+
+  // Рассчитываем масштаб так, чтобы фрагмент занимал примерно 60% от размера контейнера
+  const targetWidth = containerWidth * 0.6;
+  const targetHeight = containerHeight * 0.6;
+
+  const scaleX = targetWidth / (fragmentWidth * imageDisplayWidth.value / 100);
+  const scaleY = targetHeight / (fragmentHeight * imageDisplayHeight.value / 100);
+
+  // Используем меньший масштаб, чтобы фрагмент поместился
+  const scale = Math.min(scaleX, scaleY, 3); // Максимальный масштаб 3x
+
+  // Рассчитываем смещение для центрирования фрагмента
+  const scaledFragmentCenterX = (fragmentCenterX / 100) * imageDisplayWidth.value;
+  const scaledFragmentCenterY = (fragmentCenterY / 100) * imageDisplayHeight.value;
+
+  const translateX = (containerWidth / 2) - (scaledFragmentCenterX * scale);
+  const translateY = (containerHeight / 2) - (scaledFragmentCenterY * scale);
+
+  return { scale, translateX, translateY };
+};
+
+// Функция для применения масштабирования к изображению
+const applyImageZoom = (scale: number, translateX: number, translateY: number) => {
+  const img = document.querySelector('.metric-book-image') as HTMLImageElement;
+  if (!img) return;
+
+  // Сохраняем оригинальную трансформацию, если еще не сохранена
+  if (!isZoomed.value) {
+    originalTransform.value = img.style.transform || '';
+  }
+
+  img.style.transform = `scale(${scale}) translate(${translateX / scale}px, ${translateY / scale}px)`;
+  img.style.transformOrigin = '0 0';
+  isZoomed.value = true;
+};
+
+// Функция для применения масштабирования к SVG баундинг боксам
+const applySvgZoom = (scale: number, translateX: number, translateY: number) => {
+  const svg = document.querySelector('.connection-lines') as SVGElement;
+  if (!svg) return;
+
+  // Применяем трансформацию к SVG
+  svg.style.transform = `scale(${scale}) translate(${translateX / scale}px, ${translateY / scale}px)`;
+  svg.style.transformOrigin = '0 0';
+
+  // При масштабировании скрываем обводку и оставляем только заливку
+  setStrokeVisibility(false);
+
+  // Сохраняем параметры для SVG
+  svgScale.value = scale;
+  svgTranslateX.value = translateX;
+  svgTranslateY.value = translateY;
+};
+
+
+// Функция для применения толщины обводки к SVG элементам
+const applyStrokeWidth = (width: number) => {
+  const svg = document.querySelector('.connection-lines') as SVGElement;
+  if (!svg) return;
+
+  // Обновляем stroke-width для всех элементов внутри SVG
+  const paths = svg.querySelectorAll('path, polygon');
+  paths.forEach((element) => {
+    (element as SVGElement).setAttribute('stroke-width', width.toString());
+  });
+
+  strokeWidth.value = width;
+};
+
+// Функция для управления отображением обводки
+const setStrokeVisibility = (visible: boolean) => {
+  showStroke.value = visible;
+};
+
+// Функция для сброса масштабирования SVG
+const resetSvgZoom = () => {
+  const svg = document.querySelector('.connection-lines') as SVGElement;
+  if (!svg) return;
+
+  svg.style.transform = '';
+  svgScale.value = 1;
+  svgTranslateX.value = 0;
+  svgTranslateY.value = 0;
+
+  // Возвращаем исходную толщину обводки и показываем обводку
+  applyStrokeWidth(baseStrokeWidth);
+  setStrokeVisibility(true);
+};
+
+// Функция для сброса масштабирования
+const resetImageZoom = () => {
+  const img = document.querySelector('.metric-book-image') as HTMLImageElement;
+  if (!img) return;
+
+  img.style.transform = originalTransform.value;
+  isZoomed.value = false;
+  imageScale.value = 1;
+  imageTranslateX.value = 0;
+  imageTranslateY.value = 0;
+
+  // Также сбрасываем масштабирование SVG
+  resetSvgZoom();
 };
 
 // Функция для обновления размеров контейнера
@@ -696,8 +852,8 @@ onUnmounted(() => {
                       .join(' ')
                   "
                   fill="rgba(68, 68, 255, 0.1)"
-                  stroke="#4444ff"
-                  stroke-width="3"
+                  :stroke="showStroke ? '#4444ff' : 'none'"
+                  :stroke-width="showStroke ? strokeWidth : 0"
                 />
               </g>
 
@@ -724,10 +880,10 @@ onUnmounted(() => {
                   v-for="(coord, index) in highlightedCoords.slice(0, -1)"
                   :key="`line-${index}`"
                   :d="`M ${(coord.x / 100) * imageDisplayWidth} ${(coord.y / 100) * imageDisplayHeight} Q ${((coord.x + highlightedCoords[index + 1].x) / 200) * imageDisplayWidth} ${((coord.y + highlightedCoords[index + 1].y) / 200) * imageDisplayHeight} ${(highlightedCoords[index + 1].x / 100) * imageDisplayWidth} ${(highlightedCoords[index + 1].y / 100) * imageDisplayHeight}`"
-                  stroke="#ff4444"
-                  stroke-width="3"
+                  :stroke="showStroke ? '#ff4444' : 'none'"
+                  :stroke-width="showStroke ? strokeWidth : 0"
                   fill="none"
-                  stroke-linecap="round"
+                  :stroke-linecap="showStroke ? 'round' : 'butt'"
                   @click="handleBoundingBoxClick"
                   :style="`cursor: ${isInteractionBlocked ? 'default' : 'pointer'};`"
                 />
@@ -736,10 +892,10 @@ onUnmounted(() => {
                 <path
                   v-if="highlightedCoords.length > 2"
                   :d="`M ${(highlightedCoords[highlightedCoords.length - 1].x / 100) * imageDisplayWidth} ${(highlightedCoords[highlightedCoords.length - 1].y / 100) * imageDisplayHeight} Q ${((highlightedCoords[highlightedCoords.length - 1].x + highlightedCoords[0].x) / 200) * imageDisplayWidth} ${((highlightedCoords[highlightedCoords.length - 1].y + highlightedCoords[0].y) / 200) * imageDisplayHeight} ${(highlightedCoords[0].x / 100) * imageDisplayWidth} ${(highlightedCoords[0].y / 100) * imageDisplayHeight}`"
-                  stroke="#ff4444"
-                  stroke-width="3"
+                  :stroke="showStroke ? '#ff4444' : 'none'"
+                  :stroke-width="showStroke ? strokeWidth : 0"
                   fill="none"
-                  stroke-linecap="round"
+                  :stroke-linecap="showStroke ? 'round' : 'butt'"
                   @click="handleBoundingBoxClick"
                   :style="`cursor: ${isInteractionBlocked ? 'default' : 'pointer'};`"
                 />
@@ -1042,6 +1198,8 @@ onUnmounted(() => {
   bottom: 0;
   right: 0;
   z-index: 5;
+  transition: transform 0.3s ease-in-out;
+  transform-origin: center center;
 }
 
 .metric-book-image {
@@ -1050,6 +1208,8 @@ onUnmounted(() => {
   width: auto;
   height: auto;
   object-fit: contain;
+  transition: transform 0.3s ease-in-out;
+  transform-origin: center center;
 }
 
 .image-bottom-section {
