@@ -281,3 +281,146 @@ class ReportBuilder:
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={"Content-Disposition": f'attachment; filename="{filename}"'}
         )
+
+
+class FileReportBuilder:
+    async def __call__(
+        self,
+        file_uuid: str,
+        format: str,
+        stage: str,
+        *,
+        fields: Optional[List[str]] = None,
+        entity_types_order: Optional[List[str]] = None,
+        entity_joiner: str = "\n",
+        deduplicate_values: bool = True,
+    ):
+        # 1) мета файла
+        fkey = f"files/{file_uuid}"
+        if not await store.exists(fkey):
+            raise HTTPException(http.HTTP_404_NOT_FOUND, "file not found")
+        fmeta = await store.read(fkey)
+
+        group_uuid = fmeta.get("group_uuid")
+        if not group_uuid:
+            raise HTTPException(http.HTTP_400_BAD_REQUEST, "file has no group_uuid")
+
+        # 2) метаданные группы (fond/opis/delo)
+        gkey = f"groups/{group_uuid}"
+        fond = opis = delo = ""
+        if await store.exists(gkey):
+            grp = await store.read(gkey)
+            fond = grp.get("fond") or ""
+            opis = grp.get("opis") or ""
+            delo = grp.get("delo") or ""
+
+        # 3) вычислим scan_no так же, как в групповом отчёте
+        file_ids: List[str] = []
+        idx_key = f"group_index/{group_uuid}"
+        if await store.exists(idx_key):
+            idx = await store.read(idx_key)
+            file_ids = list(idx.get("files", []))
+        else:
+            for key in await store.list("files"):
+                rec = await store.read(key)
+                if rec.get("group_uuid") == group_uuid:
+                    file_ids.append(rec["file_uuid"])
+
+        metas: List[Dict[str, Any]] = []
+        for fid in file_ids:
+            m = await store.read(f"files/{fid}")
+            m.setdefault("file_uuid", fid)
+            metas.append(m)
+        metas.sort(key=lambda m: (m.get("filename") or m.get("original_name") or "").lower())
+
+        # позиция текущего файла в отсортированном списке (как в групповом отчёте)
+        scan_no = ""
+        for idx, m in enumerate(metas, start=1):
+            if m.get("file_uuid") == file_uuid:
+                scan_no = str(idx)
+                break
+
+        # 4) stage-директория и поиск JSON по стему файла
+        stage_dir = _process_dir(group_uuid, stage)
+        if not stage_dir.exists():
+            stage_dir.mkdir(parents=True, exist_ok=True)
+
+        json_by_stem: Dict[str, Path] = {}
+        for p in stage_dir.glob("*.json"):
+            if p.is_file():
+                json_by_stem[_stem_norm(p.name)] = p
+
+        fname = (fmeta.get("filename") or fmeta.get("original_name") or "").strip()
+        base_stem = _stem_norm(fname)
+        payload_path = json_by_stem.get(base_stem)
+
+        # 5) поля/заголовки
+        default_fields = [
+            "scan_no", "fond", "opis", "delo",
+            "text", "entity_type", "entity_value", "extra",
+        ]
+        selected_fields = [f for f in (fields or default_fields) if f in FIELD_LABELS]
+        header = [FIELD_LABELS[f] for f in selected_fields]
+        rows: List[List[str]] = []
+
+        # 6) собрать строки
+        if payload_path is None:
+            # нет результата — одна пустая строка
+            row_map = {
+                "scan_no": scan_no, "fond": str(fond), "opis": str(opis), "delo": str(delo),
+                "text": "", "entity_type": "", "entity_value": "", "extra": "",
+            }
+            rows.append([row_map.get(f, "") for f in selected_fields])
+        else:
+            data = await _read_json_path(payload_path)
+            for text, ents in _iter_text_and_ents(data):
+                grouped = _group_entities(
+                    ents,
+                    order=entity_types_order,
+                    deduplicate=deduplicate_values,
+                )
+                if not grouped:
+                    row_map = {
+                        "scan_no": scan_no, "fond": str(fond), "opis": str(opis), "delo": str(delo),
+                        "text": text, "entity_type": "", "entity_value": "", "extra": "",
+                    }
+                    rows.append([row_map.get(f, "") for f in selected_fields])
+                    continue
+
+                for etype, values in grouped.items():
+                    block = entity_joiner.join(v for v in values if v is not None)
+                    row_map = {
+                        "scan_no": scan_no, "fond": str(fond), "opis": str(opis), "delo": str(delo),
+                        "text": text, "entity_type": etype, "entity_value": block, "extra": "",
+                    }
+                    rows.append([row_map.get(f, "") for f in selected_fields])
+
+        # 7) отдать файл (CSV/XLSX) — полностью аналогично групповому отчёту
+        if format.lower() == "csv":
+            sio = StringIO()
+            w = csv.writer(sio, delimiter=",")
+            w.writerow(header)
+            w.writerows(rows)
+            sio.seek(0)
+            filename = f"report_file_{file_uuid}_{stage}.csv"
+            return StreamingResponse(
+                iter([sio.getvalue().encode("utf-8")]),
+                media_type="text/csv; charset=utf-8",
+                headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+            )
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Report"
+        ws.append(header)
+        for r in rows:
+            ws.append(r)
+        bio = BytesIO()
+        wb.save(bio); bio.seek(0)
+        filename = f"report_file_{file_uuid}_{stage}.xlsx"
+        return StreamingResponse(
+            bio,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+        )
+

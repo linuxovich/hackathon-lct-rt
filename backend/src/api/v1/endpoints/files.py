@@ -4,7 +4,7 @@ import os
 import asyncio
 from pathlib import Path
 import mimetypes
-from typing import List, Optional
+from typing import List, Optional, Literal
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse, FileResponse
@@ -18,10 +18,14 @@ from src.utils.common import (
 )
 from src.infra.storage.local_storage import AsyncLocalJsonFileStoreAiofiles, JsonFileStoreConfig
 from src.core.configs import configs
+from src.services.report.report import FileReportBuilder
 
 store = AsyncLocalJsonFileStoreAiofiles(JsonFileStoreConfig(base_dir=configs.dirs.store))
 
 files_router = APIRouter(prefix="/files", tags=["files"])
+
+Format = Literal["xlsx", "csv"]
+Stage  = Literal["progress", "done"]
 
 
 async def _resolve_content_path(
@@ -191,3 +195,46 @@ async def get_file_image(file_uuid: str):
     media_type = mimetypes.guess_type(img_path.name)[0] or "application/octet-stream"
     # inline-отдача (без forced download)
     return FileResponse(path=str(img_path), media_type=media_type, filename=img_path.name)
+
+@files_router.get("/{file_uuid}/report")
+async def build_file_report(
+    file_uuid: str,
+    format: Format = Query("xlsx", description="Формат файла отчёта"),
+    stage: Stage   = Query("progress", description="Стадия обработки: progress|done"),
+    fields: Optional[List[str]] = Query(
+        None,
+        description="Список полей отчёта в нужном порядке: "
+                    "scan_no,fond,opis,delo,text,entity_type,entity_value,extra",
+    ),
+    entity_types_order: Optional[List[str]] = Query(
+        None,
+        description="Желаемый порядок типов сущностей (repeatable или через запятую)",
+    ),
+    entity_joiner: str = Query("\n", description="Разделитель значений внутри одного типа"),
+    deduplicate_values: bool = Query(
+        True, description="Убирать повторы значений внутри одного типа"
+    ),
+):
+    # Нормализация repeatable/comma-separated
+    def _normalize_list(v: Optional[List[str]]) -> Optional[List[str]]:
+        if not v:
+            return None
+        out: List[str] = []
+        for item in v:
+            out.extend([s.strip() for s in item.split(",") if s.strip()])
+        return out or None
+
+    norm_fields = _normalize_list(fields)
+    norm_order  = _normalize_list(entity_types_order)
+
+    use_case = FileReportBuilder()
+    return await use_case(
+        file_uuid=file_uuid,
+        format=format,
+        stage=stage,
+        fields=norm_fields,
+        entity_types_order=norm_order,
+        entity_joiner=entity_joiner,
+        deduplicate_values=deduplicate_values,
+    )
+
