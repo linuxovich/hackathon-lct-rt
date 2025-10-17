@@ -22,6 +22,62 @@ const isImageLoading = ref(false);
 const imageLoadError = ref(false);
 
 const hoveredIndex = ref<number | null>(null);
+// Добавляем переменную для отслеживания наведения на изображение
+const imageHoveredIndex = ref<number | null>(null);
+
+// Computed свойство для объединения наведения на текст и изображение
+const effectiveHoveredIndex = computed(() => {
+  // Приоритет у наведения на текст (если пользователь наводит на текст)
+  if (hoveredIndex.value !== null) {
+    return hoveredIndex.value;
+  }
+  // Иначе используем наведение на изображение
+  return imageHoveredIndex.value;
+});
+
+// Функция для плавной прокрутки к элементу
+const scrollToElement = (index: number) => {
+  const textSection = document.querySelector('.text-section');
+  if (!textSection) return;
+
+  const textItems = textSection.querySelectorAll('.text-item');
+  const targetElement = textItems[index] as HTMLElement;
+
+  if (targetElement) {
+    // Проверяем, виден ли элемент
+    const rect = targetElement.getBoundingClientRect();
+    const containerRect = textSection.getBoundingClientRect();
+
+    // Если элемент не полностью виден, прокручиваем
+    const isFullyVisible = rect.top >= containerRect.top && rect.bottom <= containerRect.bottom;
+
+    if (!isFullyVisible) {
+      targetElement.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+        inline: 'nearest'
+      });
+    }
+  }
+};
+
+// Переменная для debounce
+let scrollTimeout: number | null = null;
+
+// Watcher для автоматической прокрутки при наведении на изображение
+watch(imageHoveredIndex, (newIndex) => {
+  if (newIndex !== null) {
+    // Очищаем предыдущий timeout
+    if (scrollTimeout) {
+      clearTimeout(scrollTimeout);
+    }
+
+    // Небольшая задержка для плавности и debounce
+    scrollTimeout = setTimeout(() => {
+      scrollToElement(newIndex);
+    }, 150);
+  }
+});
 const editingIndex = ref<number | null>(null);
 const isSaving = ref(false);
 const imageWrapperWidth = ref(0);
@@ -33,13 +89,18 @@ const imageDisplayHeight = ref(0);
 const imageAspectRatio = ref(1);
 const imageOffsetX = ref(0);
 const imageOffsetY = ref(0);
-const isMagnifierVisible = ref(false);
-const magnifierX = ref(0);
-const magnifierY = ref(0);
-const magnifierRelativeX = ref(0);
-const magnifierRelativeY = ref(0);
-const magnifierSize = 259; // размер увеличителя
-const magnifierScale = 2; // коэффициент увеличения
+// Удаляем переменные для лупы
+// const isMagnifierVisible = ref(false);
+// const magnifierX = ref(0);
+// const magnifierY = ref(0);
+// const magnifierRelativeX = ref(0);
+// const magnifierRelativeY = ref(0);
+// const magnifierSize = 259; // размер увеличителя
+// const magnifierScale = 2; // коэффициент увеличения
+
+// Добавляем переменные для подсветки баундинг боксов
+const hoveredBoundingBox = ref<number | null>(null);
+const hoveredLineIndex = ref<number | null>(null);
 
 // Преобразуем координаты один раз при загрузке
 const processedContent = ref<
@@ -250,9 +311,9 @@ const highlightedCoords = computed(() => {
   if (editingIndex.value !== null) {
     return processedContent.value[editingIndex.value]?.coords || [];
   }
-  // Иначе показываем выделение при наведении
-  if (hoveredIndex.value !== null) {
-    return processedContent.value[hoveredIndex.value]?.coords || [];
+  // Иначе показываем выделение при наведении на текст или изображение
+  if (effectiveHoveredIndex.value !== null) {
+    return processedContent.value[effectiveHoveredIndex.value]?.coords || [];
   }
   return [];
 });
@@ -263,9 +324,13 @@ const highlightedRegionIndex = computed(() => {
   if (editingIndex.value !== null) {
     return processedContent.value[editingIndex.value]?.regionIndex;
   }
-  // Иначе показываем при наведении
-  if (hoveredIndex.value !== null) {
-    return processedContent.value[hoveredIndex.value]?.regionIndex;
+  // Иначе показываем при наведении на текст или изображение
+  if (effectiveHoveredIndex.value !== null) {
+    return processedContent.value[effectiveHoveredIndex.value]?.regionIndex;
+  }
+  // Или при наведении на изображение (синие баундинг боксы) - только если нет красного
+  if (hoveredBoundingBox.value !== null && hoveredLineIndex.value === null) {
+    return hoveredBoundingBox.value;
   }
   return null;
 });
@@ -299,6 +364,7 @@ const updateItemText = async (index: number, newText: string) => {
 const startEditing = (index: number) => {
   editingIndex.value = index;
   hoveredIndex.value = null; // Сбрасываем hover при начале редактирования
+  imageHoveredIndex.value = null; // Сбрасываем наведение на изображение
 };
 
 // Функция для завершения редактирования
@@ -348,7 +414,26 @@ const saveContentToServer = async () => {
 //   return processedContent.value.find(item => item.id === id);
 // };
 
-// Функции для увеличителя
+// Функция для проверки, находится ли точка внутри полигона
+const isPointInPolygon = (point: { x: number; y: number }, polygon: Array<{ x: number; y: number }>): boolean => {
+  if (polygon.length < 3) return false;
+
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const xi = polygon[i].x;
+    const yi = polygon[i].y;
+    const xj = polygon[j].x;
+    const yj = polygon[j].y;
+
+    if (((yi > point.y) !== (yj > point.y)) &&
+        (point.x < (xj - xi) * (point.y - yi) / (yj - yi) + xi)) {
+      inside = !inside;
+    }
+  }
+  return inside;
+};
+
+// Функции для обработки наведения на изображение
 const handleImageMouseMove = (event: MouseEvent) => {
   const imageContainer = event.currentTarget as HTMLElement;
   const rect = imageContainer.getBoundingClientRect();
@@ -364,18 +449,54 @@ const handleImageMouseMove = (event: MouseEvent) => {
     relativeY >= 0 &&
     relativeY <= imageDisplayHeight.value
   ) {
-    magnifierX.value = event.clientX;
-    magnifierY.value = event.clientY;
-    magnifierRelativeX.value = relativeX;
-    magnifierRelativeY.value = relativeY;
-    isMagnifierVisible.value = true;
+    // Конвертируем координаты в проценты
+    const pointX = (relativeX / imageDisplayWidth.value) * 100;
+    const pointY = (relativeY / imageDisplayHeight.value) * 100;
+
+    const mousePoint = { x: pointX, y: pointY };
+
+    // Сбрасываем предыдущие значения
+    hoveredBoundingBox.value = null;
+    hoveredLineIndex.value = null;
+    imageHoveredIndex.value = null;
+
+    // Сначала проверяем lines (красные баундинг боксы) - они имеют приоритет
+    for (let i = 0; i < processedContent.value.length; i++) {
+      const line = processedContent.value[i];
+      if (line.coords.length > 2) {
+        const isInside = isPointInPolygon(mousePoint, line.coords);
+        if (isInside) {
+          hoveredLineIndex.value = i;
+          imageHoveredIndex.value = i; // Устанавливаем индекс для подсветки текста
+          hoveredBoundingBox.value = null; // Сбрасываем синий, если нашли красный
+          break;
+        }
+      }
+    }
+
+    // Если не нашли в lines, проверяем regions (синие баундинг боксы)
+    if (hoveredLineIndex.value === null) {
+      for (let i = 0; i < regionsContent.value.length; i++) {
+        const region = regionsContent.value[i];
+        if (region.coords.length > 2) {
+          const isInside = isPointInPolygon(mousePoint, region.coords);
+          if (isInside) {
+            hoveredBoundingBox.value = i;
+            break;
+          }
+        }
+      }
+    }
   } else {
-    isMagnifierVisible.value = false;
+    hoveredBoundingBox.value = null;
+    hoveredLineIndex.value = null;
   }
 };
 
 const handleImageMouseLeave = () => {
-  isMagnifierVisible.value = false;
+  hoveredBoundingBox.value = null;
+  hoveredLineIndex.value = null;
+  imageHoveredIndex.value = null;
 };
 
 // Функция для обновления размеров контейнера
@@ -442,6 +563,11 @@ onUnmounted(() => {
   if (resizeObserver) {
     resizeObserver.disconnect();
     resizeObserver = null;
+  }
+  // Очищаем timeout при размонтировании
+  if (scrollTimeout) {
+    clearTimeout(scrollTimeout);
+    scrollTimeout = null;
   }
 });
 </script>
@@ -519,7 +645,7 @@ onUnmounted(() => {
               :height="imageDisplayHeight"
               :style="`transform: translate(${imageOffsetX}px, ${imageOffsetY}px);`"
             >
-              <!-- Regions bounding boxes (синие рамки) - показываем только при hover на соответствующий текст -->
+              <!-- Regions bounding boxes (синие рамки) - показываем при hover на соответствующий текст или при наведении на изображение -->
               <g
                 v-if="
                   highlightedRegionIndex !== null &&
@@ -537,9 +663,9 @@ onUnmounted(() => {
                       )
                       .join(' ')
                   "
-                  fill="rgba(68, 68, 255, 0.05)"
+                  fill="rgba(68, 68, 255, 0.1)"
                   stroke="#4444ff"
-                  stroke-width="2"
+                  stroke-width="3"
                 />
               </g>
 
@@ -581,27 +707,6 @@ onUnmounted(() => {
                 />
               </g>
             </svg>
-
-            <!-- Увеличитель -->
-            <div
-              v-if="isMagnifierVisible"
-              class="magnifier"
-              :style="{
-                left: `${magnifierX - magnifierSize / 2}px`,
-                top: `${magnifierY - magnifierSize / 2}px`,
-                width: `${magnifierSize}px`,
-                height: `${magnifierSize}px`,
-              }"
-            >
-              <div
-                class="magnifier-content"
-                :style="{
-                  backgroundImage: `url(${imageUrl})`,
-                  backgroundSize: `${imageDisplayWidth * magnifierScale}px ${imageDisplayHeight * magnifierScale}px`,
-                  backgroundPosition: `-${magnifierRelativeX * magnifierScale - magnifierSize / 2}px -${magnifierRelativeY * magnifierScale - magnifierSize / 2}px`,
-                }"
-              ></div>
-            </div>
           </div>
         </div>
 
@@ -642,7 +747,7 @@ onUnmounted(() => {
           v-for="(item, index) in processedContent"
           :key="index"
           :text="item.text"
-          :is-hovered="hoveredIndex === index"
+          :is-hovered="effectiveHoveredIndex === index"
           :is-editing="editingIndex === index"
           :is-saving="isSaving"
           @mouseenter="editingIndex === null && (hoveredIndex = index)"
@@ -813,26 +918,27 @@ onUnmounted(() => {
   justify-content: center;
   width: 100%;
   height: 100%;
-  cursor: crosshair;
+  cursor: default;
 }
 
-.magnifier {
-  position: fixed;
-  z-index: 1000;
-  border: 3px solid #1a73e8;
-  border-radius: 8px;
-  overflow: hidden;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
-  pointer-events: none;
-  background: white;
-}
+// Удаляем стили для лупы
+// .magnifier {
+//   position: fixed;
+//   z-index: 1000;
+//   border: 3px solid #1a73e8;
+//   border-radius: 8px;
+//   overflow: hidden;
+//   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+//   pointer-events: none;
+//   background: white;
+// }
 
-.magnifier-content {
-  width: 100%;
-  height: 100%;
-  background-repeat: no-repeat;
-  border-radius: 5px;
-}
+// .magnifier-content {
+//   width: 100%;
+//   height: 100%;
+//   background-repeat: no-repeat;
+//   border-radius: 5px;
+// }
 
 // Индикатор загрузки
 .image-loading {
