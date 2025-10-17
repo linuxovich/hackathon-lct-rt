@@ -6,6 +6,7 @@ import { onMounted, onBeforeUnmount, watch } from 'vue';
 import { DocumentStatusesEnum, type Document } from '@/interfaces/documents';
 import { API_ROUTES, client, uploadClient } from '@/constants';
 import IconPlus from '@/icons/IconPlus.vue';
+import ReportConstructor from './ReportConstructor.vue';
 
 const timer = ref();
 
@@ -88,6 +89,10 @@ const editingState = ref<{
   field: null,
   value: '',
 });
+
+// Состояние для конструктора отчетов
+const showReportConstructor = ref(false);
+const selectedGroupUuid = ref<string>('');
 
 const editValues = ref<
   Record<
@@ -384,16 +389,48 @@ const cancelDeleteGroup = () => {
   groupToDelete.value = null;
 };
 
-// Функция для скачивания отчета группы
-const downloadGroupReport = async (groupUuid: string) => {
+// Функция для открытия конструктора отчетов для группы
+const openReportConstructor = (groupUuid: string) => {
+  selectedGroupUuid.value = groupUuid;
+  showReportConstructor.value = true;
+};
+
+// Функция для открытия конструктора отчетов для файла
+const openFileReportConstructor = (fileUuid: string) => {
+  selectedGroupUuid.value = fileUuid;
+  showReportConstructor.value = true;
+};
+
+// Функция для закрытия конструктора отчетов
+const closeReportConstructor = () => {
+  showReportConstructor.value = false;
+  selectedGroupUuid.value = '';
+};
+
+// Функция для скачивания отчета с параметрами (для групп и файлов)
+const downloadReportWithParams = async (uuid: string, format: string, fields: string[], isFile: boolean = false) => {
   try {
-    const response = await client.get(API_ROUTES.groups.report(groupUuid), {
+    // Формируем URL с параметрами
+    const fieldsParam = fields.join(',');
+    let baseUrl: string;
+
+    if (isFile) {
+      // Для файлов используем эндпоинт файлов
+      baseUrl = API_ROUTES.files.report(uuid);
+    } else {
+      // Для групп используем эндпоинт групп
+      baseUrl = API_ROUTES.groups.report(uuid);
+    }
+
+    const url = `${baseUrl}?format=${format}&stage=done&fields=${encodeURIComponent(fieldsParam)}`;
+
+    const response = await client.get(url, {
       responseType: 'blob',
     });
 
     // Определяем расширение файла из Content-Type заголовка
     const contentType = response.headers['content-type'] || '';
-    let fileExtension = '.xlsx'; // По умолчанию xlsx
+    let fileExtension = format === 'csv' ? '.csv' : '.xlsx'; // По умолчанию
 
     if (contentType.includes('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')) {
       fileExtension = '.xlsx';
@@ -407,22 +444,35 @@ const downloadGroupReport = async (groupUuid: string) => {
 
     // Создаем URL для blob
     const blob = new Blob([response.data], { type: contentType });
-    const url = window.URL.createObjectURL(blob);
+    const urlObject = window.URL.createObjectURL(blob);
 
     // Создаем временную ссылку для скачивания
     const link = document.createElement('a');
-    link.href = url;
-    link.download = `report_${groupUuid}${fileExtension}`;
+    link.href = urlObject;
+    link.download = `report_${uuid}${fileExtension}`;
     document.body.appendChild(link);
     link.click();
 
     // Очищаем ресурсы
     document.body.removeChild(link);
-    window.URL.revokeObjectURL(url);
+    window.URL.revokeObjectURL(urlObject);
+
+    // Закрываем конструктор
+    closeReportConstructor();
   } catch (error) {
     console.error('Ошибка при скачивании отчета:', error);
     alert('Ошибка при скачивании отчета. Попробуйте еще раз.');
   }
+};
+
+// Функция для обработки генерации отчета из конструктора
+const handleGenerateReport = (params: { format: string; fields: string[]; groupUuid: string }) => {
+  // Определяем, является ли UUID файлом или группой
+  const isFile = documentsStore.all.some(group =>
+    group.some(file => file.file_uuid === params.groupUuid)
+  );
+
+  downloadReportWithParams(params.groupUuid, params.format, params.fields, isFile);
 };
 
 // Функция для загрузки файлов в существующую группу
@@ -959,7 +1009,7 @@ onBeforeUnmount(() => {
               >
                 <button
                   class="download-btn"
-                  @click="downloadGroupReport(documentsStore.groupUuids[groupIndex])"
+                  @click="openReportConstructor(documentsStore.groupUuids[groupIndex])"
                 >
                   <svg
                     class="download-icon"
@@ -1103,6 +1153,18 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
                 <div class="file-name">{{ file.filename }}</div>
+                <div
+                  v-if="file.status === DocumentStatusesEnum.done"
+                  class="file-download-btn"
+                  @click.stop="openFileReportConstructor(file.file_uuid)"
+                  title="Скачать отчет файла"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M21 15V19C21 19.5304 20.7893 20.0391 20.4142 20.4142C20.0391 20.7893 19.5304 21 19 21H5C4.46957 21 3.96086 20.7893 3.58579 20.4142C3.21071 20.0391 3 19.5304 3 19V15" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M7 10L12 15L17 10" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M12 15V3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                </div>
               </div>
             </div>
           </transition>
@@ -1173,6 +1235,14 @@ onBeforeUnmount(() => {
       </div>
     </div>
   </div>
+
+  <!-- Конструктор отчетов -->
+  <ReportConstructor
+    :is-visible="showReportConstructor"
+    :group-uuid="selectedGroupUuid"
+    @close="closeReportConstructor"
+    @generate="handleGenerateReport"
+  />
 </template>
 
 <style scoped lang="scss">
@@ -2145,6 +2215,38 @@ onBeforeUnmount(() => {
   font-size: 14px;
   color: #3c4043;
   font-weight: 400;
+}
+
+.file-download-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #5f6368;
+  transition: all 0.2s ease;
+  opacity: 0;
+  transform: scale(0.8);
+}
+
+.file-item:hover .file-download-btn {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.file-download-btn:hover {
+  background-color: #e8f0fe;
+  color: #1a73e8;
+  transform: scale(1.1);
+}
+
+.file-download-btn svg {
+  width: 16px;
+  height: 16px;
 }
 
 // Drag & Drop область

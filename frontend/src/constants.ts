@@ -22,7 +22,7 @@ export const API_ROUTES = {
     all: (group_uuid: string) => `/api/v1/groups/${group_uuid}/files`,
   },
   groups: {
-    report: (group_uuid: string) => `/api/v1/groups/${group_uuid}/report?format=xlsx&stage=done`,
+    report: (group_uuid: string) => `/api/v1/groups/${group_uuid}/report`,
   },
   upload: {
     files: () => `/api/v1/groups/upload-files`,
@@ -33,6 +33,7 @@ export const API_ROUTES = {
       `/api/v1/files/${file_uuid}/content?stage=${stage}`,
     image: (file_uuid: string) => `/api/v1/files/${file_uuid}/image`,
     updateContent: (file_uuid: string) => `/api/v1/files/${file_uuid}/content`,
+    report: (file_uuid: string) => `/api/v1/files/${file_uuid}/report`,
   },
 };
 
