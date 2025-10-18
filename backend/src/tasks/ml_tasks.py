@@ -1,8 +1,32 @@
 import time
 import httpx
+import urllib.parse
 import dramatiq
 from src.tasks.broker import broker  # noqa: F401
 from src.core.configs import configs
+
+
+@dramatiq.actor(max_retries=3, min_backoff=1000, max_backoff=8000, time_limit=60_000)
+def start_postproccessing_pipeline(url, port, source, dst, group_uuid: str, callback_url: str):
+    query = urllib.parse.urlencode({
+        "source":  f"/out/var/data/groups/{group_uuid}/{source}/",
+        "dst":     f"/out/var/data/groups/{group_uuid}/{dst}/",
+        "callback": callback_url,
+    })
+    url = f"{url}:{port}/?{query}"
+    backoff = 0.5
+    for attempt in range(6):
+        try:
+            with httpx.Client(timeout=10) as client:
+                r = client.get(url)
+                r.raise_for_status()
+                return
+        except Exception:
+            if attempt == 5:
+                raise
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 8)
+
 
 @dramatiq.actor(max_retries=10, min_backoff=1000, max_backoff=8000, time_limit=60_000)
 def start_ml_pipeline(group_uuid: str):
