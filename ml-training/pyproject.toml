@@ -1,0 +1,19 @@
+[project]
+name = "ocr-training"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "accelerate>=1.10.1",
+    "aiohttp>=3.13.1",
+    "editdistance>=0.8.1",
+    "evaluate>=0.4.6",
+    "matplotlib>=3.10.6",
+    "numpy>=2.2.6",
+    "opencv-python>=4.11.0.86",
+    "torch>=2.8.0",
+    "torchvision>=0.23.0",
+    "tqdm>=4.67.1",
+    "transformers>=4.56.2",
+]

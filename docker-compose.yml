@@ -9,6 +9,11 @@ services:
     environment:
       - OMP_NUM_THREADS=4
       - PYTHONUNBUFFERED=1
+  
+  ml-training:
+    build: ./ml-training
+    container_name: hackaton-ml-training
+    restart: unless-stopped
 
   backend:
      build: ./backend
