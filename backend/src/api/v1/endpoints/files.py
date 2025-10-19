@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import json
 import asyncio
 from pathlib import Path
 import mimetypes
@@ -15,8 +16,11 @@ from src.api.v1.schemas.file_schemas import (
     FileOut, FileStatus, FilePatch, FileContentIn, FileContentOut
 )
 from src.utils.common import (
-    stage_dir, group_dir_status, atomic_write_json, read_json_file
+    stage_dir, group_dir_status, atomic_write_json, read_json_file, group_dir_final, group_dir_process
 )
+
+from src.utils.files import  _find_source_image, _copy2, _write_text_atomic
+
 from src.infra.storage.local_storage import AsyncLocalJsonFileStoreAiofiles, JsonFileStoreConfig
 from src.core.configs import configs
 from src.services.report.report import FileReportBuilder
@@ -90,7 +94,7 @@ async def _resolve_content_path(
         return p_default
 
     # >1
-    print("multiple candidate content files found")
+    logger.info("multiple candidate content files found")
     return uniq[-1]
 
 
@@ -130,22 +134,78 @@ async def put_file_content(
     file_uuid: str,
     payload: FileContentIn,
     stage: str = Query("done", pattern="^(progress|upgrading|done)$"),
-    filename: str | None = Query(None, description="Имя json-файла для записи в каталоге stage"),
+    filename: str | None = Query(
+        None,
+        description="Имя json-файла для записи в каталоге stage. "
+                    "Также используется как базовое имя для пары train JSON+image."
+    ),
 ):
-    # тут must_exist=False — можно создавать новый файл
-    logger.info("JSON:")
-    logger.info(payload.json)
-    p = await _resolve_content_path(file_uuid, stage=stage, filename=filename, must_exist=False)
-    await atomic_write_json(p, payload.json)
+    """
+    1) Сохраняем контент файла в соответствующий stage-каталог (как и раньше).
+    2) Дополнительно кладём train-артефакты:
+       - var/train/jsons/<basename>.json (payload как есть)
+       - var/train/images/<basename>.<ext> (копия исходного изображения)
+    basename = stem(filename) | stem(meta.filename/original_name) | file_uuid
+    """
 
-    # при записи в process логично проставить done
-    if stage == "progress":
-        meta = await store.read(f"files/{file_uuid}")
-        meta["status"] = FileStatus.done.value
-        await store.replace(f"files/{file_uuid}", meta)
-        await atomic_write_json(group_dir_status(meta["group_uuid"]) / f"{file_uuid}.json", meta)
+    # ---- 0. читаем метаданные файла (нужны имя и group_uuid) ----
+    if not await store.exists(f"files/{file_uuid}"):
+        raise HTTPException(status_code=http.HTTP_404_NOT_FOUND, detail="file not found")
 
-    return FileContentOut(file_uuid=file_uuid, json=payload.json)
+    meta = await store.read(f"files/{file_uuid}")
+    group_uuid = meta.get("group_uuid")
+    original_name = (meta.get("filename") or meta.get("original_name") or "").strip()
+
+    # ---- 1. обычная логика записи в stage-каталог (как у вас) ----
+    # определяем имя JSON внутри каталога stage
+    stage_dir = (group_dir_final(group_uuid) if stage == "done"
+                 else group_dir_process(group_uuid))
+    stage_dir.mkdir(parents=True, exist_ok=True)
+
+    stage_json_name = filename or (Path(original_name).with_suffix(".json").name if original_name else f"{file_uuid}.json")
+    stage_json_path = stage_dir / stage_json_name
+
+    # сериализуем payload (Pydantic) в JSON
+    # Если у FileContentIn нет model_dump(), замените на payload.dict()
+    try:
+        payload_dict = payload.model_dump()   # Pydantic v2
+    except AttributeError:
+        payload_dict = payload.dict()         # Pydantic v1
+
+    await _write_text_atomic(stage_json_path, json.dumps(payload_dict, ensure_ascii=False, indent=2))
+
+    # ---- 2. подготовка train-имён (единый basename для пары JSON+image) ----
+    if filename:
+        base_stem = Path(filename).stem
+    elif original_name:
+        base_stem = Path(original_name).stem
+    else:
+        base_stem = file_uuid
+
+    train_root = Path("var") / "train"
+    train_jsons_dir = train_root / "jsons"
+    train_images_dir = train_root / "images"
+
+    train_json_path = train_jsons_dir / f"{base_stem}.json"
+
+    # пишем train JSON такой же структурой, как пришёл payload
+    await _write_text_atomic(train_json_path, json.dumps(payload_dict, ensure_ascii=False, indent=2))
+
+    # ---- 3. ищем и копируем исходное изображение в train/images/<basename>.<ext> ----
+    src_image = await _find_source_image(meta, base_stem, group_uuid)
+    if src_image is None:
+        # Ничего не падаем — просто сообщаем 404 по изображению в поле ответа.
+        logger.info("src image is None")
+        copied_image = None
+    else:
+        dst_image = train_images_dir / f"{base_stem}{src_image.suffix.lower()}"
+        await _copy2(src_image, dst_image)
+        copied_image = str(dst_image)
+
+    return FileContentOut(
+        file_uuid=file_uuid,
+        json=payload.json
+    )
 
 
 @files_router.delete("/{file_uuid}/content", status_code=http.HTTP_204_NO_CONTENT)

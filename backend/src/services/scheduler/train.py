@@ -1,5 +1,7 @@
 import asyncio
 import time
+import os
+import shutil
 import sys
 import httpx
 from loguru import logger
@@ -31,6 +33,9 @@ async def model_train():
                 raise
             time.sleep(backoff)
             backoff = min(backoff * 2, 8)
+        finally:
+            shutil.rmtree('/var/train/')
+            os.mkdir("/var/train/")
     return 1
 
 async def main():
