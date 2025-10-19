@@ -172,7 +172,9 @@ async def put_file_content(
     except AttributeError:
         payload_dict = payload.dict()         # Pydantic v1
 
-    await _write_text_atomic(stage_json_path, json.dumps(payload_dict, ensure_ascii=False, indent=2))
+    # await _write_text_atomic(stage_json_path, json.dumps(payload_dict, ensure_ascii=False, indent=2))
+    p = await _resolve_content_path(file_uuid, stage=stage, filename=filename, must_exist=False)
+    await atomic_write_json(p, payload.json)
 
     # ---- 2. подготовка train-имён (единый basename для пары JSON+image) ----
     if filename:
@@ -183,7 +185,7 @@ async def put_file_content(
         base_stem = file_uuid
 
     train_root = Path("var") / "train"
-    train_jsons_dir = train_root / "jsons"
+    train_jsons_dir = train_root / "texts"
     train_images_dir = train_root / "images"
 
     train_json_path = train_jsons_dir / f"{base_stem}.json"

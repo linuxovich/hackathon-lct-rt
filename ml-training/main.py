@@ -88,7 +88,7 @@ def start_model_training(model, labels_dir, checkpoint_dir, input_image_dir):
         hp.checkpoint_dir = args.checkpoint_dir
         hp.trans_dir = summary.get("text_dir")
         hp.image_dir = summary.get("image_dir")
-        train_baseline(hp=hp)
+        # train_baseline(hp=hp)
     else:
         args.data_dir = Path(summary.get("image_dir")).parent
         train_trocr_model(args)
@@ -111,8 +111,7 @@ def health_check(request):
 
 if __name__ == "__main__":
     app = web.Application()
-    app.add_routes([web.get('/', health_check)])
-    app.add_routes([web.get('/train', main)])
+    app.add_routes([web.get('/', main)])
     web.run_app(app, port=int(os.getenv("PORT", "8080")))
 
     

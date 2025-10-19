@@ -1,30 +1,28 @@
+version: "3.9"
+
 services:
-  ml-pipeline:
-    build: ./ml
-    container_name: hackaton-ml-pipeline
+  rabbit:
+    image: rabbitmq:3.13-management
+    container_name: rabbit
     restart: unless-stopped
-    volumes:
-      - ./backend:/out
-      - ml-pipeline-storage:/app/local_storage
+    ports:
+      - "5672:5672"    # AMQP
+      - "15672:15672"  # Web UI
     environment:
-      - OMP_NUM_THREADS=4
-      - PYTHONUNBUFFERED=1
-  scheduler:
-    build:
-      context: .
-      dockerfile: backend/src/services/scheduler/Dockerfile
-    restart: unless-stopped
-    command: python -m services.scheduler.train
-  ml-training:
-    build: ./ml-training
-    container_name: hackaton-ml-training
-    restart: unless-stopped
+      RABBITMQ_DEFAULT_USER: appuser
+      RABBITMQ_DEFAULT_PASS: supersecret
+      RABBITMQ_DEFAULT_VHOST: /
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
 
   backend:
     build: ./backend
-    restart: unless-stopped
     container_name: hackaton-backend
-    command: python -m uvicorn main:application --host 0.0.0.0
+    restart: unless-stopped
+    command: python -m uvicorn main:application --host 0.0.0.0 --port 8000
     ports:
       - "8000:8000"
     volumes:
@@ -33,22 +31,9 @@ services:
     environment:
       - ML_PIPELINE_SERVICE=ml-pipeline
       - QUEUE_AMQP_URL=amqp://appuser:supersecret@rabbit:5672/%2F
-
-  rabbit:
-    image: rabbitmq:3.13-management
-    restart: unless-stopped
-    ports:
-      - "5672:5672" # AMQP
-      - "15672:15672" # веб-UI
-    environment:
-      RABBITMQ_DEFAULT_USER: appuser
-      RABBITMQ_DEFAULT_PASS: supersecret
-      RABBITMQ_DEFAULT_VHOST: /
-    healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+    depends_on:
+      rabbit:
+        condition: service_healthy
 
   worker:
     build: ./backend
@@ -61,12 +46,49 @@ services:
       - ML_PIPELINE__URL=http://ml-pipeline:8080
       - BACKEND_BASE_URL=http://backend:8000
     command: >
-      sh -c "python -c 'import src.tasks.ml_tasks as _' &&
-        dramatiq src.tasks.ml_tasks --processes 1 --threads 4"
+      sh -c "
+        until nc -z rabbit 5672; do echo 'waiting for rabbit...'; sleep 1; done &&
+        python -c 'import src.tasks.ml_tasks as _' &&
+        dramatiq src.tasks.ml_tasks --processes 1 --threads 4
+      "
+
+  scheduler:
+    build:
+      context: .
+      dockerfile: backend/src/services/scheduler/Dockerfile
+    restart: unless-stopped
+    command: python -m services.scheduler.train
+    volumes:
+      - ./backend:/out
+    environment:
+      - QUEUE_AMQP_URL=amqp://appuser:supersecret@rabbit:5672/%2F
+    depends_on:
+      rabbit:
+        condition: service_healthy
+
+  ml-pipeline:
+    build: ./ml
+    container_name: hackaton-ml-pipeline
+    restart: unless-stopped
+    volumes:
+      - ./backend:/out
+      - ml-pipeline-storage:/app/local_storage
+    environment:
+      - OMP_NUM_THREADS=4
+      - PYTHONUNBUFFERED=1
+    # expose:
+    #   - "8080"   # uncomment if you want to expose outside compose
+
+  ml-training:
+    build: ./ml-training
+    container_name: hackaton-ml-training
+    restart: unless-stopped
+    volumes:
+      - ./backend:/out
 
   postprocessing:
-    restart: unless-stopped
     build: ./postprocessing
+    restart: unless-stopped
     volumes:
       - ./backend/var:/out/var
     environment:
@@ -79,8 +101,8 @@ services:
     build:
       context: ./postprocessing
       dockerfile: Dockerfile.llm
-    restart: unless-stopped
     container_name: gigachat
+    restart: unless-stopped
     volumes:
       - ./gigachat:/root/.ollama
     environment:
@@ -88,10 +110,10 @@ services:
 
   frontend:
     build: ./frontend
-    ports:
-      - "8354:80"
     container_name: frontend-app
     restart: unless-stopped
+    ports:
+      - "8354:80"
     environment:
       - NODE_ENV=production
 

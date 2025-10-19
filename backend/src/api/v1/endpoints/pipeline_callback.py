@@ -68,6 +68,10 @@ async def pipeline_callback(payload: dict, background_tasks: BackgroundTasks):
 
     if status == "upgrading":
         callback_url = f"http://backend:8000/api/v1/pipeline/callback_postprocessing"
-        start_postproccessing_pipeline("http://postprocessing", 8000, "process", "final", gid, callback_url)
+        background_tasks.add_task(
+            start_postproccessing_pipeline,
+            "http://postprocessing", 8000, "process", "final", gid, callback_url
+        )
+	# start_postproccessing_pipeline("http://postprocessing", 8000, "process", "final", gid, callback_url)
 
     return FileOut(file_uuid=fid, group_uuid=gid, filename=meta.get("filename") or "", status=status)
