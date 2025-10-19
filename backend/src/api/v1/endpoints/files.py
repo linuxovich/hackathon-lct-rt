@@ -6,6 +6,7 @@ from pathlib import Path
 import mimetypes
 from typing import List, Optional, Literal
 
+from loguru import logger
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi import status as http
@@ -132,6 +133,8 @@ async def put_file_content(
     filename: str | None = Query(None, description="Имя json-файла для записи в каталоге stage"),
 ):
     # тут must_exist=False — можно создавать новый файл
+    logger.info("JSON:")
+    logger.info(payload.json)
     p = await _resolve_content_path(file_uuid, stage=stage, filename=filename, must_exist=False)
     await atomic_write_json(p, payload.json)
 

@@ -9,32 +9,37 @@ services:
     environment:
       - OMP_NUM_THREADS=4
       - PYTHONUNBUFFERED=1
-  
+  scheduler:
+    build:
+      context: .
+      dockerfile: backend/src/services/scheduler/Dockerfile
+    restart: unless-stopped
+    command: python -m services.scheduler.train
   ml-training:
     build: ./ml-training
     container_name: hackaton-ml-training
     restart: unless-stopped
 
   backend:
-     build: ./backend
-     restart: unless-stopped
-     container_name: hackaton-backend
-     command: python -m uvicorn main:application --host 0.0.0.0
-     ports:
-       - "8000:8000"
-     volumes:
-       - /var/run/docker.sock:/var/run/docker.sock
-       - ./backend:/app
-     environment:
-       - ML_PIPELINE_SERVICE=ml-pipeline
-       - QUEUE_AMQP_URL=amqp://appuser:supersecret@rabbit:5672/%2F
+    build: ./backend
+    restart: unless-stopped
+    container_name: hackaton-backend
+    command: python -m uvicorn main:application --host 0.0.0.0
+    ports:
+      - "8000:8000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./backend:/app
+    environment:
+      - ML_PIPELINE_SERVICE=ml-pipeline
+      - QUEUE_AMQP_URL=amqp://appuser:supersecret@rabbit:5672/%2F
 
   rabbit:
     image: rabbitmq:3.13-management
     restart: unless-stopped
     ports:
-      - "5672:5672"     # AMQP
-      - "15672:15672"   # веб-UI
+      - "5672:5672" # AMQP
+      - "15672:15672" # веб-UI
     environment:
       RABBITMQ_DEFAULT_USER: appuser
       RABBITMQ_DEFAULT_PASS: supersecret
@@ -56,8 +61,8 @@ services:
       - ML_PIPELINE__URL=http://ml-pipeline:8080
       - BACKEND_BASE_URL=http://backend:8000
     command: >
-       sh -c "python -c 'import src.tasks.ml_tasks as _' &&
-         dramatiq src.tasks.ml_tasks --processes 1 --threads 4"
+      sh -c "python -c 'import src.tasks.ml_tasks as _' &&
+        dramatiq src.tasks.ml_tasks --processes 1 --threads 4"
 
   postprocessing:
     restart: unless-stopped

@@ -11,9 +11,7 @@ git clone https://github.com/linuxovich/hackathon-lct-rt.git
 cd hackathon-lct-rt
 ```
 
-3. Скопируйте `.env.example` → `.env.dev` и заполните
-
-4. Запустите:
+3. Запустите:
    ```bash
-    make up
+    sudo make up
     ```

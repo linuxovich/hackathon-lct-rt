@@ -35,6 +35,7 @@ class QueueSettings(EnvBaseSettings):
 
 class MlSettings(EnvBaseSettings):
     url: str = "http://ml-pipeline:8080"
+    training_url: str = "http://ml-training:8080"
     callback_path_ocr: str = "/api/v1/pipeline/callback_ocr"
 
 class Configs(EnvBaseSettings):
