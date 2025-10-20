@@ -51,19 +51,16 @@ class TextConcatenator:
                 concatenated_result["concatenated_regions"].append(region_data)
                 continue
             
-            # Sort lines by Y-coordinate (top to bottom) for proper concatenation
+            # Sort lines by Y-coordinate (bottom to top) for proper concatenation
             sorted_lines = self._sort_lines_by_y_coordinate(text_lines)
             
-            # Analyze text continuity and handle line breaks
-            processed_lines = self._analyze_text_continuity(sorted_lines)
-            
-            # Concatenate text with proper spacing
-            concatenated_text = self._concatenate_text_lines(processed_lines)
+            # Simple concatenation without complex analysis
+            concatenated_text = self._simple_concatenate_lines(sorted_lines)
             
             region_data["concatenated_text"] = concatenated_text
             region_data["text_lines"] = text_lines  # Keep original order for file-text correspondence
-            region_data["line_breaks_handled"] = self._count_line_breaks_handled(processed_lines)
-            region_data["merged_words"] = self._count_merged_words(processed_lines)
+            region_data["line_breaks_handled"] = 0  # Упрощенная логика
+            region_data["merged_words"] = 0  # Упрощенная логика
             
             concatenated_result["concatenated_regions"].append(region_data)
         
@@ -128,20 +125,8 @@ class TextConcatenator:
         if not text1 or not text2:
             return False
         
-        # Check for hyphenated words
-        if text1.endswith('-'):
-            return True
-        
-        # Check for sentence continuation (lowercase start)
-        if text2[0].islower():
-            return True
-        
-        # Check for punctuation continuation
-        if text1.endswith(('.', ',', ';', ':')) and not text2[0].isupper():
-            return True
-        
-        # Check for short words that might be continuations
-        if len(text1) < 3 and len(text2) < 3:
+        # Только проверяем переносы через дефис
+        if text1.endswith('-') and text2 and not text2[0].isupper():
             return True
         
         return False
@@ -183,34 +168,41 @@ class TextConcatenator:
         Returns:
             Concatenated text string
         """
-        concatenated_text = ""
-        current_sentence = ""
+        # Простое соединение строк в обратном порядке
+        text_parts = []
         
         for line in processed_lines:
-            text = line["text"]
-            
-            if line["is_continuation"]:
-                # Continue current sentence
-                if line.get("merged_text"):
-                    current_sentence += line["merged_text"]
+            text = line.get("text", "").strip()
+            if text:
+                # Если это перенос через дефис, объединяем с предыдущим
+                if line.get("is_continuation") and line.get("merged_text"):
+                    if text_parts:
+                        text_parts[-1] = line["merged_text"]
+                    else:
+                        text_parts.append(line["merged_text"])
                 else:
-                    current_sentence += text
-            else:
-                # Start new sentence
-                if current_sentence:
-                    concatenated_text += current_sentence.strip() + " "
-                    current_sentence = ""
-                
-                if line["is_line_break"]:
-                    current_sentence = text
-                else:
-                    concatenated_text += text + " "
+                    text_parts.append(text)
         
-        # Add final sentence
-        if current_sentence:
-            concatenated_text += current_sentence.strip()
+        return " ".join(text_parts)
+    
+    def _simple_concatenate_lines(self, text_lines: List[Dict[str, Any]]) -> str:
+        """
+        Простая конкатенация строк без сложной логики.
         
-        return concatenated_text.strip()
+        Args:
+            text_lines: List of text lines
+        
+        Returns:
+            Concatenated text string
+        """
+        text_parts = []
+        
+        for line in text_lines:
+            text = line.get('text', '').strip()
+            if text:
+                text_parts.append(text)
+        
+        return " ".join(text_parts)
     
     def _sort_lines_by_y_coordinate(self, text_lines: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """

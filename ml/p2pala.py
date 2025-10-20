@@ -1,5 +1,4 @@
 import os
-import time
 import numpy as np
 import cv2
 
@@ -22,7 +21,7 @@ def predict_layout(image_basenames_to_images, weights_path="models/weights.pth")
                      batch_size=8, cnn_ngf=64,
                      do_class=True, do_off=True,
                      img_size=np.array([1024, 1280], dtype=np.int32), input_channels=3,
-                     line_alg='basic', line_color=128, line_offset=50, line_width=4,
+                     line_alg='basic', line_color=128, line_offset=30, line_width=7,
                      max_vertex=30, merge_regions={}, merged_regions={}, min_area=0.01, net_out_type='C',
                      nontext_regions=None, num_segments=4, num_workers=4, out_mode='LR',
                      output_channels=9, pin_memory=False,
@@ -59,7 +58,6 @@ def predict_layout(image_basenames_to_images, weights_path="models/weights.pth")
             if opts.do_off:
                 nnG.apply(models.off_dropout)
 
-        prod_start_time = time.time()
         pr_data = dp.htrDataProcess(
             opts,
             build_labels=False

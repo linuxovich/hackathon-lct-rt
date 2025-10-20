@@ -228,8 +228,8 @@ class PipelineProcessor:
         min_y = max(0, min(y_coords))
         max_y = min(image.shape[0], max(y_coords))
         
-        # Add some padding
-        padding = 5
+        # Add some padding (negative to crop more precisely)
+        padding = 0  # Умеренный отрицательный padding
         min_x = max(0, min_x - padding)
         max_x = min(image.shape[1], max_x + padding)
         min_y = max(0, min_y - padding)
@@ -276,7 +276,9 @@ class PipelineProcessor:
                             texts, confidences = self.ocr_predictor.predict([gray_img])
                             
                             if texts and confidences:
-                                line['text'] = texts[0]
+                                # Очищаем дублированный текст
+                                cleaned_text = self._clean_duplicated_text(texts[0])
+                                line['text'] = cleaned_text
                                 line['confidence'] = confidences[0]
                             else:
                                 line['text'] = ""
@@ -292,6 +294,46 @@ class PipelineProcessor:
         except Exception as e:
             print(f"Error in OCR processing: {e}")
             return text_regions
+    
+    def _clean_duplicated_text(self, text: str) -> str:
+        """
+        Очищает дублированный текст внутри строки.
+        
+        Args:
+            text: Исходный текст
+        
+        Returns:
+            Очищенный текст
+        """
+        if not text:
+            return text
+            
+        # Разбиваем на слова
+        words = text.split()
+        if not words:
+            return text
+            
+        # Ищем повторяющиеся последовательности слов
+        cleaned_words = []
+        i = 0
+        
+        while i < len(words):
+            word = words[i]
+            cleaned_words.append(word)
+            
+            # Проверяем, не повторяется ли следующее слово
+            j = i + 1
+            while j < len(words) and words[j] == word:
+                j += 1
+            
+            # Если нашли повторения, пропускаем их
+            if j > i + 1:
+                # Пропускаем повторяющиеся слова
+                i = j
+            else:
+                i += 1
+        
+        return " ".join(cleaned_words)
     
     def _create_ocr_xml(self, ocr_results: List[Dict[str, Any]], scan_id: str) -> str:
         """
