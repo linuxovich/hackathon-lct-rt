@@ -58,8 +58,8 @@ def prepare_dataset(args) -> dict:
         except Exception as e:
             print(f"Failed to read JSON {json_path}: {e}")
             continue
-
-        root = data.get('json', data).get('json')
+        
+        root = data.get('json', data)
         img_path = find_image(input_image_dir, base_name)
         if not img_path:
             print(os.listdir(json_path))
@@ -157,7 +157,6 @@ def prepare_dataset(args) -> dict:
     except Exception:
         pass
     return summary
-
 
 if __name__ == "__main__":
     args = parse_args()
