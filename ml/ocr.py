@@ -1,181 +1,289 @@
-import cv2
+#!/usr/bin/env python3
+"""
+OCR модуль с НОВОЙ архитектурой (batch_first=True, resnet_proj)
+Используется checkpoint best.pt из train_baseline.py
+"""
+
+import json
 import math
+import os
 import numpy as np
 import torch
 import torch.nn as nn
-from torchvision import models
+from torchvision.models import resnet50, ResNet50_Weights
+import torchvision.transforms as transforms
+from PIL import Image
 
-from ocr_parameters import labels_to_text, process_image, ModelParameters
+
+class ModelParameters:
+    def __init__(self):
+        self.batch_size = 16
+        self.hidden = 512
+        self.enc_layers = 1
+        self.dec_layers = 1
+        self.nhead = 4
+        self.dropout = 0.1
+        self.width = 1024
+        self.height = 128
 
 
-class ImageLoader(torch.utils.data.Dataset):
-    def __init__(self, images):
-        self.images = images
-
-    def __getitem__(self, index):
-        return self.images[index]
-
-    def __len__(self):
-        return len(self.images)
+def labels_to_text(s, idx2p):
+    S = "".join([idx2p[i] for i in s])
+    return S if 'EOS' not in S else S[:S.find('EOS')]
 
 
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model, dropout=0.1, max_len=5000):
-        super(PositionalEncoding, self).__init__()
+        super().__init__()
         self.dropout = nn.Dropout(p=dropout)
         self.scale = nn.Parameter(torch.ones(1))
-
         pe = torch.zeros(max_len, d_model)
         position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
-        div_term = torch.exp(torch.arange(
-            0, d_model, 2).float() * (-math.log(10000.0) / d_model))
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
-
-        pe = pe.unsqueeze(0).transpose(0, 1)
+        pe = pe.unsqueeze(0)  # Shape: (1, max_len, d_model)
         self.register_buffer('pe', pe)
 
     def forward(self, x):
-        x = x + self.scale * self.pe[:x.size(0), :]
+        # x shape: (batch_size, seq_len, d_model)
+        x = x + self.scale * self.pe[:, :x.size(1), :]
         return self.dropout(x)
 
 
 class TransformerModel(nn.Module):
-    def __init__(self, name, outtoken, hidden=128, enc_layers=1, dec_layers=1, nhead=1, dropout=0.1, pretrained=False):
-        super(TransformerModel, self).__init__()
-        self.backbone = models.__getattribute__(name)(pretrained=pretrained)
-        # self.backbone.avgpool = nn.MaxPool2d((4, 1))
-        self.backbone.fc = nn.Conv2d(2048, hidden // 4, 1)
+    def __init__(self, vocab_size, hidden=128, enc_layers=1, dec_layers=1, nhead=1, dropout=0.1, pretrained=True):
+        super().__init__()
+        if pretrained:
+            backbone = resnet50(weights=ResNet50_Weights.IMAGENET1K_V2)
+        else:
+            backbone = resnet50(weights=None)
+        modules = list(backbone.children())[:-2]
+        self.backbone = nn.Sequential(*modules)
+        self.resnet_proj = nn.Conv2d(2048, hidden, 1)
 
         self.pos_encoder = PositionalEncoding(hidden, dropout)
-        self.decoder = nn.Embedding(outtoken, hidden)
+        self.decoder = nn.Embedding(vocab_size, hidden)
         self.pos_decoder = PositionalEncoding(hidden, dropout)
-        self.transformer = nn.Transformer(d_model=hidden, nhead=nhead, num_encoder_layers=enc_layers,
-                                          num_decoder_layers=dec_layers, dim_feedforward=hidden * 4, dropout=dropout,
-                                          activation='relu')
+        self.transformer = nn.Transformer(
+            d_model=hidden, nhead=nhead, num_encoder_layers=enc_layers,
+            num_decoder_layers=dec_layers, dim_feedforward=hidden * 4,
+            dropout=dropout, activation='relu', batch_first=True
+        )
+        self.fc_out = nn.Linear(hidden, vocab_size)
 
-        self.fc_out = nn.Linear(hidden, outtoken)
-        self.src_mask = None
-        self.trg_mask = None
-        self.memory_mask = None
-
-    def generate_square_subsequent_mask(self, sz):
-        mask = torch.triu(torch.ones(sz, sz), 1)
-        mask = mask.masked_fill(mask == 1, float('-inf'))
-        return mask
+    def generate_square_subsequent_mask(self, sz, device):
+        mask = torch.triu(torch.ones(sz, sz, device=device), 1).bool()
+        return mask.masked_fill(mask, float('-inf'))
 
     def make_len_mask(self, inp):
-        return (inp == 0).transpose(0, 1)
+        return (inp == 0)
 
     def forward(self, src, trg):
-        if self.trg_mask is None or self.trg_mask.size(0) != len(trg):
-            self.trg_mask = self.generate_square_subsequent_mask(len(trg)).to(trg.device)
+        # Encoder
+        x = self.backbone(src)
+        x = self.resnet_proj(x)
+        x = x.flatten(2).permute(0, 2, 1)
+        src_pos = self.pos_encoder(x)
 
-        x = self.backbone.conv1(src)
-        x = self.backbone.bn1(x)
-        x = self.backbone.relu(x)
-        x = self.backbone.maxpool(x)
-        x = self.backbone.layer1(x)
-        x = self.backbone.layer2(x)
-        x = self.backbone.layer3(x)
-        x = self.backbone.layer4(x)
+        # Decoder input
+        trg_emb = self.decoder(trg)
+        trg_pos = self.pos_decoder(trg_emb)
 
-        x = self.backbone.fc(x)
-        x = x.permute(0, 3, 1, 2).flatten(2).permute(1, 0, 2)
-        src_pad_mask = self.make_len_mask(x[:, :, 0])
-        src = self.pos_encoder(x)
+        # Masking
+        trg_mask = self.generate_square_subsequent_mask(trg.size(1), trg.device)
+        src_key_padding_mask = None
+        trg_key_padding_mask = self.make_len_mask(trg)
 
-        trg_pad_mask = self.make_len_mask(trg)
-        trg = self.decoder(trg)
-        trg = self.pos_decoder(trg)
-
-        output = self.transformer(src, trg, src_mask=self.src_mask, tgt_mask=self.trg_mask,
-                                  memory_mask=self.memory_mask,
-                                  src_key_padding_mask=src_pad_mask, tgt_key_padding_mask=trg_pad_mask,
-                                  memory_key_padding_mask=src_pad_mask)
+        # Transformer forward
+        output = self.transformer(
+            src=src_pos,
+            tgt=trg_pos,
+            tgt_mask=trg_mask,
+            src_key_padding_mask=src_key_padding_mask,
+            tgt_key_padding_mask=trg_key_padding_mask,
+        )
         output = self.fc_out(output)
+        return output
 
+    def forward_encoder(self, src):
+        """Encodes the source image batch into memory for decoding (batch_first=True)."""
+        x = self.backbone(src)  # shape: (batch, 2048, h, w)
+        x = self.resnet_proj(x)  # shape: (batch, hidden, h, w)
+        x = x.flatten(2).permute(0, 2, 1)  # shape: (batch, seq_len, hidden)
+        src_pos = self.pos_encoder(x)
+        memory = self.transformer.encoder(src_pos)
+        return memory  # shape: (batch, seq_len, hidden)
+
+    def forward_decoder(self, trg, memory):
+        """Decodes output tokens using encoder memory. Assumes trg shape: (batch, tgt_seq_len)."""
+        trg_emb = self.decoder(trg)
+        trg_pos = self.pos_decoder(trg_emb)
+        trg_mask = self.generate_square_subsequent_mask(trg.size(1), trg.device)
+        trg_key_padding_mask = self.make_len_mask(trg)
+        output = self.transformer.decoder(
+            tgt=trg_pos,
+            memory=memory,
+            tgt_mask=trg_mask,
+            tgt_key_padding_mask=trg_key_padding_mask,
+        )
+        output = self.fc_out(output)
         return output
 
 
 class OCRPredictor:
-    def __init__(self, checkpoint_path="./models/transformer_v2.0.pt"):
-        self.device = torch.device('cpu')
+    def __init__(self, checkpoint_path=None):
+        if checkpoint_path is None:
+            # Определяем путь относительно этого файла
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            checkpoint_path = os.path.join(current_dir, "models", "best.pt")
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.params = ModelParameters()
+        
+        # Загружаем checkpoint
+        checkpoint = torch.load(checkpoint_path, map_location=self.device)
+        
+        # Извлекаем алфавит из checkpoint'а
+        if 'vocab' in checkpoint:
+            self.p2idx = checkpoint['vocab']
+            self.idx2p = {idx: char for char, idx in self.p2idx.items()}
+            self.letters = list(self.p2idx.keys())
+        else:
+            # Fallback к стандартному алфавиту (106 символов)
+            letters_ = list(
+                ' !"%\'()*+,-./0123456789:;<=>?\\АБВГДЕЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдежзийклмнопрстуфхцчшщъыьэюя№'
+                'ѣѳѵіїѐѓєѕіїјљњћќѝўџѡѣѥѧѩѫѭѯѱѳѵѷѹѻѽѿҁ҂ҋҌҍҎҏҐґҒғҔҕҖҗҘҙҚқҜҝҞҟҠҡҢңҤҥҦҧҨҩҪҫҬҭҮүҰұҲҳҴҵҶҷҸҹҺһҼҽҾҿӀӁӂӃӄӅӆӇӈӉӊӋӌӍӎӏӐӑӒӓӔӕӖӗӘәӚӛӜӝӞӟӠӡӢӣӤӥӦӧӨөӪӫӬӭӮӯӰӱӲӳӴӵӶӷӸӹӺӻӼӽӾӿԀԁԂԃԄԅԆԇԈԉԊԋԌԍԎԏԐԑԒԓԔԕԖԗԘԙԚԛԜԝԞԟԠԡԢԣԤԥԦԧԨԩԪԫԬԭԮԯꙀꙁꙂꙃꙄꙅꙆꙇꙈꙉꙊꙋꙌꙍꙎꙏꙐꙑꙒꙓꙔꙕꙖꙗꙘꙙꙚꙛꙜꙝꙞꙟꙠꙡꙢꙣꙤꙥꙦꙧꙨꙩꙪꙫꙬ'
+            )
+            self.letters = ['PAD', 'SOS'] + list(letters_) + ['EOS']
+            self.p2idx = {char: i for i, char in enumerate(self.letters)}
+            self.idx2p = {i: char for i, char in enumerate(self.letters)}
 
-        letters_ = list(
-            ' !"%\'()*+,-./0123456789:;<=>?\\АБВГДЕЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдежзийклмнопрстуфхцчшщъыьэюя№')
-        self.letters = ['PAD', 'SOS'] + letters_ + ['EOS']
+        # Создаем модель
+        self.model = TransformerModel(
+            vocab_size=len(self.letters), 
+            hidden=self.params.hidden,
+            enc_layers=self.params.enc_layers,
+            dec_layers=self.params.dec_layers, 
+            nhead=self.params.nhead,
+            dropout=self.params.dropout,
+            pretrained=True
+        ).to(self.device)
 
-        self.char_to_index = {char: i for i, char in enumerate(self.letters)}
-        self.index_to_char = {i: char for i, char in enumerate(self.letters)}
+        # Загружаем веса
+        if 'model' in checkpoint:
+            self.model.load_state_dict(checkpoint['model'])
+        else:
+            self.model.load_state_dict(checkpoint)
+        
+        # Создаем трансформации ТОЧНО как в TextLoader
+        self.transform_eval = transforms.Compose([
+            transforms.ToPILImage(),
+            transforms.Resize((self.params.height, self.params.width)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        ])
 
-        self.model = TransformerModel('resnet50', len(self.letters), hidden=self.params.hidden,
-                                      enc_layers=self.params.enc_layers,
-                                      dec_layers=self.params.dec_layers, nhead=self.params.nhead,
-                                      dropout=self.params.dropout).to(self.device)
-
-        checkpoint = torch.load(checkpoint_path, map_location=torch.device('cpu'))
-        self.model.load_state_dict(checkpoint)
+    def preprocess_image(self, img):
+        """ТОЧНАЯ предобработка как в TextLoader (dataset.py)."""
+        # Конвертируем grayscale в 3-канальное
+        if img.ndim == 2:
+            img = np.stack([img] * 3, axis=-1)
+        
+        # Применяем трансформации
+        img_tensor = self.transform_eval(img)
+        return img_tensor
 
     def predict(self, images):
+        """
+        Предсказывает текст для списка изображений.
+        ТОЧНО повторяет логику validate() из train_baseline.py.
+        
+        Args:
+            images: Список grayscale изображений (numpy arrays)
+        
+        Returns:
+            (predictions, confidences)
+        """
         self.model.eval()
-
-        text_labels = []
-        confidence = []
-
+        predictions = []
+        confidences = []
+        
         with torch.no_grad():
             for img in images:
-                img = process_image(img, self.params).astype('uint8')
-                img = img / img.max()
-                img = np.transpose(img, (2, 0, 1))
+                # Предобработка изображения
+                img_tensor = self.preprocess_image(img)
+                src = img_tensor.unsqueeze(0).to(self.device)  # (1, 3, H, W)
+                
+                # ТОЧНАЯ логика inference из validate()
+                batch_size = src.shape[0]  # = 1
+                start_token = self.p2idx['SOS']
+                end_token = self.p2idx['EOS']
 
-                src = torch.FloatTensor(img).unsqueeze(0).cpu()
+                # Encode image features
+                memory = self.model.forward_encoder(src)  # shape: (batch, src_seq_len, hidden)
 
-                x = self.model.backbone.conv1(src)
-                x = self.model.backbone.bn1(x)
-                x = self.model.backbone.relu(x)
-                x = self.model.backbone.maxpool(x)
+                # Prepare decoder input: start with SOS token
+                trg_tensor = torch.full((batch_size, 1), start_token, dtype=torch.long, device=self.device)
+                out_indexes = [[start_token] for _ in range(batch_size)]
 
-                x = self.model.backbone.layer1(x)
-                x = self.model.backbone.layer2(x)
-                x = self.model.backbone.layer3(x)
-                x = self.model.backbone.layer4(x)
-                x = self.model.backbone.fc(x)
-                x = x.permute(0, 3, 1, 2).flatten(2).permute(1, 0, 2)
-                memory = self.model.transformer.encoder(self.model.pos_encoder(x))
-
-                string_confidence = 1
-                out_indexes = [self.char_to_index['SOS'], ]
-                for i in range(200):
-                    trg_tensor = torch.LongTensor(out_indexes).unsqueeze(1).to(self.device)
-                    output = self.model.fc_out(
-                        self.model.transformer.decoder(self.model.pos_decoder(self.model.decoder(trg_tensor)), memory))
-
-                    out_token = output.argmax(2)[-1].item()
-                    string_confidence = string_confidence * torch.sigmoid(output[-1, 0, out_token]).item()
-                    out_indexes.append(out_token)
-                    if out_token == self.char_to_index['EOS']:
+                for _ in range(100):  # Maximum sequence length
+                    output = self.model.forward_decoder(trg_tensor, memory)  # (batch, cur_seq_len, vocab_size)
+                    output_last_token = output[:, -1, :]  # (batch, vocab_size)
+                    out_tokens = output_last_token.argmax(dim=1)  # (batch,)
+                    
+                    for b_idx in range(batch_size):
+                        if out_indexes[b_idx][-1] != end_token:
+                            out_indexes[b_idx].append(out_tokens[b_idx].item())
+                    
+                    # Prepare next decoder input
+                    out_tokens_unsqueezed = out_tokens.unsqueeze(1)  # (batch, 1)
+                    trg_tensor = torch.cat([trg_tensor, out_tokens_unsqueezed], dim=1)
+                    
+                    # Stop early if all sequences finished
+                    if all(idx_list[-1] == end_token for idx_list in out_indexes):
                         break
 
-                label = labels_to_text(out_indexes[1:], self.index_to_char)
-                text_labels.append(label)
-                confidence.append(string_confidence)
-
-        return text_labels, confidence
+                # Post-processing
+                for b_idx in range(batch_size):
+                    # Generated output (skip SOS, remove EOS)
+                    out_p_indices = out_indexes[b_idx][1:]
+                    out_p_indices = [idx for idx in out_p_indices if idx != end_token]
+                    out_p = labels_to_text(out_p_indices, self.idx2p)
+                    
+                    predictions.append(out_p)
+                    confidences.append(1.0)  # Placeholder
+        
+        return predictions, confidences
 
 
 if __name__ == '__main__':
-    import time
-
-    t1 = time.time()
-    image_filenames = [ "/home/linuxovich/ocr-analysis/000001482.JPG"]* 5 
-
-    images = [cv2.imread(filename, cv2.IMREAD_GRAYSCALE) for filename in image_filenames]
-    print(images[0].shape)
-
-    predictor = OCRPredictor()
-    texts, confidences = predictor.predict(images)
-    print(texts)
-    print(confidences)
-    print("TIME", time.time() - t1)
+    import cv2
+    
+    print("🔬 ТЕСТ НОВОЙ АРХИТЕКТУРЫ В ocr.py")
+    print("=" * 60)
+    
+    # Тестовые изображения
+    image_filenames = [
+        "/home/fastmri/data/hackathon/train_yandex_archive/train/images/data_1d9e507a-619c-4d8f-8ff4-b87d3ecddb70_100_09b25871-6422-470e-8b89-198b653187f0.jpg"
+    ] * 3
+    
+    images = []
+    for filename in image_filenames:
+        img = cv2.imread(filename, cv2.IMREAD_GRAYSCALE)
+        if img is not None:
+            images.append(img)
+    
+    if not images:
+        print("❌ Не удалось загрузить изображения")
+    else:
+        print(f"Загружено {len(images)} изображений")
+        print(f"Размер первого изображения: {images[0].shape}")
+        
+        predictor = OCRPredictor()
+        texts, confidences = predictor.predict(images)
+        
+        print(f"\n📝 РЕЗУЛЬТАТЫ:")
+        for i, (text, conf) in enumerate(zip(texts, confidences)):
+            print(f"  [{i}] '{text}' (confidence: {conf:.4f})")
+        print("=" * 60)
+        print("✅ Тест завершен!")
