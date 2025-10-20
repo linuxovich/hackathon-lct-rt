@@ -6,6 +6,7 @@ interface Props {
   isHovered: boolean;
   isEditing: boolean;
   isSaving?: boolean;
+  canEdit?: boolean;
 }
 
 interface Emits {
@@ -63,10 +64,10 @@ watch(() => props.isEditing, (newValue) => {
 <template>
   <div
     class="text-item"
-    :class="{ hovered: isHovered, editing: isEditing }"
+    :class="{ hovered: isHovered, editing: isEditing, nonEditable: !props.canEdit }"
     @mouseenter="!isEditing && $emit('mouseenter')"
     @mouseleave="!isEditing && $emit('mouseleave')"
-    @click="!isEditing && startEditing()"
+    @click="!isEditing && props.canEdit !== false && startEditing()"
   >
     <!-- Режим просмотра -->
     <div v-if="!isEditing" class="text-content">
@@ -125,6 +126,11 @@ watch(() => props.isEditing, (newValue) => {
     border-color: #2196f3;
     cursor: default;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  }
+
+  &.nonEditable {
+    cursor: default;
+    opacity: 0.9;
   }
 }
 

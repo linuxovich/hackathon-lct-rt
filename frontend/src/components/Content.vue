@@ -406,6 +406,10 @@ const updateItemText = async (index: number, newText: string) => {
 
 // Функция для начала редактирования
 const startEditing = (index: number) => {
+  // Разрешаем редактирование только для статуса done
+  if (selectedDocumentStatus.value !== DocumentStatusesEnum.done) {
+    return;
+  }
   editingIndex.value = index;
   hoveredIndex.value = null; // Сбрасываем hover при начале редактирования
   imageHoveredIndex.value = null; // Сбрасываем наведение на изображение
@@ -438,6 +442,10 @@ const finishEditing = () => {
 const handleBoundingBoxClick = () => {
   // Если уже редактируется, блокируем клики
   if (editingIndex.value !== null) {
+    return;
+  }
+  // Разрешаем запуск редактирования только для статуса done
+  if (selectedDocumentStatus.value !== DocumentStatusesEnum.done) {
     return;
   }
 
@@ -896,7 +904,7 @@ onUnmounted(() => {
                   :stroke="showStroke ? '#ff4444' : 'none'"
                   :stroke-width="showStroke ? strokeWidth : 0"
                   @click="handleBoundingBoxClick"
-                  :style="`cursor: ${isInteractionBlocked ? 'default' : 'pointer'};`"
+                  :style="`cursor: ${selectedDocumentStatus === DocumentStatusesEnum.done && !isInteractionBlocked ? 'pointer' : 'default'};`"
                 />
               </g>
             </svg>
@@ -943,6 +951,7 @@ onUnmounted(() => {
           :is-hovered="effectiveHoveredIndex === index"
           :is-editing="editingIndex === index"
           :is-saving="isSaving"
+          :can-edit="selectedDocumentStatus === DocumentStatusesEnum.done"
           @mouseenter="editingIndex === null && (hoveredIndex = index)"
           @mouseleave="editingIndex === null && (hoveredIndex = null)"
           @start-editing="startEditing(index)"
