@@ -12,6 +12,8 @@ cd hackathon-lct-rt
 ```
 
 3. Запустите:
-   ```bash
-    sudo make up
-    ```
+```bash
+sudo make up
+```
+4. Перейдите на http://localhost:8354/document_recognition
+

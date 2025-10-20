@@ -20,6 +20,7 @@ services:
 
   backend:
     build: ./backend
+    shm_size: '4gb'
     container_name: hackaton-backend
     restart: unless-stopped
     command: python -m uvicorn main:application --host 0.0.0.0 --port 8000
@@ -69,6 +70,7 @@ services:
   ml-pipeline:
     build: ./ml
     container_name: hackaton-ml-pipeline
+    shm_size: '4gb'
     restart: unless-stopped
     volumes:
       - ./backend:/out
@@ -88,6 +90,7 @@ services:
 
   postprocessing:
     build: ./postprocessing
+    shm_size: '4gb'
     restart: unless-stopped
     volumes:
       - ./backend/var:/out/var
