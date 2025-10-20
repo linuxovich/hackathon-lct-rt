@@ -557,11 +557,20 @@ const handleImageMouseMove = (event: MouseEvent) => {
     imageHoveredIndex.value = null;
 
     // Сначала проверяем lines (красные баундинг боксы) - они имеют приоритет
+    // Упростим наведение: используем осевой прямоугольник (AABB) с небольшим запасом, соответствуя тому, что рисуем
+    const marginXPct = (4 / (imageDisplayWidth.value || 1)) * 100;  // ~4px по X в процентах
+    const marginYPct = (4 / (imageDisplayHeight.value || 1)) * 100; // ~4px по Y в процентах
+
     for (let i = 0; i < processedContent.value.length; i++) {
       const line = processedContent.value[i];
-      if (line.coords.length > 2) {
-        const isInside = isPointInPolygon(mousePoint, line.coords);
-        if (isInside) {
+      if (line.coords.length > 1) {
+        const minX = Math.min(...line.coords.map((c) => c.x)) - marginXPct;
+        const maxX = Math.max(...line.coords.map((c) => c.x)) + marginXPct;
+        const minY = Math.min(...line.coords.map((c) => c.y)) - marginYPct;
+        const maxY = Math.max(...line.coords.map((c) => c.y)) + marginYPct;
+
+        const insideRect = mousePoint.x >= minX && mousePoint.x <= maxX && mousePoint.y >= minY && mousePoint.y <= maxY;
+        if (insideRect) {
           hoveredLineIndex.value = i;
           imageHoveredIndex.value = i; // Устанавливаем индекс для подсветки текста
           hoveredBoundingBox.value = null; // Сбрасываем синий, если нашли красный
