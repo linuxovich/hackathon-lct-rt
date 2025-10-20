@@ -335,6 +335,33 @@ const highlightedCoords = computed(() => {
   return [];
 });
 
+// Прямоугольник, выровненный по осям, построенный по текущему полигону
+const highlightedRect = computed(() => {
+  const coords = highlightedCoords.value;
+  if (!coords || coords.length === 0) return null;
+
+  const minX = Math.min(...coords.map((c) => c.x));
+  const maxX = Math.max(...coords.map((c) => c.x));
+  const minY = Math.min(...coords.map((c) => c.y));
+  const maxY = Math.max(...coords.map((c) => c.y));
+
+  const xPx = (minX / 100) * imageDisplayWidth.value;
+  const yPx = (minY / 100) * imageDisplayHeight.value;
+  let wPx = ((maxX - minX) / 100) * imageDisplayWidth.value;
+  let hPx = ((maxY - minY) / 100) * imageDisplayHeight.value;
+
+  // Гарантируем ненулевые размеры, чтобы прямоугольник не исчезал
+  const MIN_SIZE_PX = 1;
+  if (wPx < MIN_SIZE_PX) wPx = MIN_SIZE_PX;
+  if (hPx < MIN_SIZE_PX) hPx = MIN_SIZE_PX;
+
+  if (!isFinite(xPx) || !isFinite(yPx) || !isFinite(wPx) || !isFinite(hPx)) {
+    return null;
+  }
+
+  return { x: xPx, y: yPx, width: wPx, height: hPx };
+});
+
 // Определяем, какой region показать при hover или редактировании
 const highlightedRegionIndex = computed(() => {
   // Приоритет у редактирования
@@ -857,45 +884,17 @@ onUnmounted(() => {
                 />
               </g>
 
-              <!-- Lines coordinates (красные рамки) -->
+              <!-- Lines coordinates (красные рамки) - показываем как осевой прямоугольник -->
               <g v-if="highlightedCoords.length > 1">
-                <!-- Полупрозрачная заливка внутри контура -->
-                <polygon
-                  v-if="highlightedCoords.length > 2"
-                  :points="
-                    highlightedCoords
-                      .map(
-                        (coord) =>
-                          `${(coord.x / 100) * imageDisplayWidth},${(coord.y / 100) * imageDisplayHeight}`,
-                      )
-                      .join(' ')
-                  "
+                <rect
+                  v-if="highlightedRect"
+                  :x="highlightedRect.x"
+                  :y="highlightedRect.y"
+                  :width="highlightedRect.width"
+                  :height="highlightedRect.height"
                   fill="rgba(255, 68, 68, 0.2)"
-                  @click="handleBoundingBoxClick"
-                  :style="`cursor: ${isInteractionBlocked ? 'default' : 'pointer'};`"
-                />
-
-                <!-- Линии между соседними точками -->
-                <path
-                  v-for="(coord, index) in highlightedCoords.slice(0, -1)"
-                  :key="`line-${index}`"
-                  :d="`M ${(coord.x / 100) * imageDisplayWidth} ${(coord.y / 100) * imageDisplayHeight} Q ${((coord.x + highlightedCoords[index + 1].x) / 200) * imageDisplayWidth} ${((coord.y + highlightedCoords[index + 1].y) / 200) * imageDisplayHeight} ${(highlightedCoords[index + 1].x / 100) * imageDisplayWidth} ${(highlightedCoords[index + 1].y / 100) * imageDisplayHeight}`"
                   :stroke="showStroke ? '#ff4444' : 'none'"
                   :stroke-width="showStroke ? strokeWidth : 0"
-                  fill="none"
-                  :stroke-linecap="showStroke ? 'round' : 'butt'"
-                  @click="handleBoundingBoxClick"
-                  :style="`cursor: ${isInteractionBlocked ? 'default' : 'pointer'};`"
-                />
-
-                <!-- Линия от последней точки к первой (замыкание контура) -->
-                <path
-                  v-if="highlightedCoords.length > 2"
-                  :d="`M ${(highlightedCoords[highlightedCoords.length - 1].x / 100) * imageDisplayWidth} ${(highlightedCoords[highlightedCoords.length - 1].y / 100) * imageDisplayHeight} Q ${((highlightedCoords[highlightedCoords.length - 1].x + highlightedCoords[0].x) / 200) * imageDisplayWidth} ${((highlightedCoords[highlightedCoords.length - 1].y + highlightedCoords[0].y) / 200) * imageDisplayHeight} ${(highlightedCoords[0].x / 100) * imageDisplayWidth} ${(highlightedCoords[0].y / 100) * imageDisplayHeight}`"
-                  :stroke="showStroke ? '#ff4444' : 'none'"
-                  :stroke-width="showStroke ? strokeWidth : 0"
-                  fill="none"
-                  :stroke-linecap="showStroke ? 'round' : 'butt'"
                   @click="handleBoundingBoxClick"
                   :style="`cursor: ${isInteractionBlocked ? 'default' : 'pointer'};`"
                 />
