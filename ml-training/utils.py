@@ -11,7 +11,7 @@ def process_texts(image_dir, trans_dir, hp):
     letters = ''
     all_word = {}
     all_files = os.listdir(trans_dir)
-    for filename in tqdm(sorted(os.listdir(image_dir))):
+    for filename in tqdm(sorted(os.listdir(image_dir)), desc="Extracting Data (Vocab & Filenames)"):
         if filename[:-3]+'txt' in all_files:
             name, _ = os.path.splitext(filename)
             txt_filepath = join(trans_dir, name + '.txt')

@@ -15,6 +15,14 @@ def parse_args():
     parser.add_argument('--destination_dir', type=str, default='./train', help='Destination directory for output images and texts')
     return parser.parse_args()
 
+def find_image(input_image_dir, base_name):
+    pattern = os.path.join(input_image_dir, base_name + '.*')
+    for path in glob.glob(pattern):
+        ext = os.path.splitext(path)[1].lower()
+        if ext in {'.jpg', '.jpeg', '.png'}:
+            return path
+    return None
+
 def prepare_dataset(args) -> dict:
     """
     Готовит датасет из JSON-аннотаций, проходя по всем регионам (regions) в каждом файле
@@ -52,15 +60,7 @@ def prepare_dataset(args) -> dict:
             continue
 
         root = data.get('json', data).get('json')
-        scan = root.get('scan', {})
-
-        # кандидаты для пути к исходному изображению
-        img_path_candidates = [
-            os.path.join(input_image_dir, base_name + '.jpg'),
-            scan.get('local_path'),
-            scan.get('image_path'),
-        ]
-        img_path = next((p for p in img_path_candidates if p and os.path.exists(p)), None)
+        img_path = find_image(input_image_dir, base_name)
         if not img_path:
             print(os.listdir(json_path))
             print(f"Image file not found for {json_path}")
@@ -151,7 +151,7 @@ def prepare_dataset(args) -> dict:
             pass
 
     summary = {"text_dir": output_txt_dir, "image_dir": output_img_dir, "total": total}
-    print(summary)
+    logger.info(summary)
     try:
         logger.info(summary)
     except Exception:
