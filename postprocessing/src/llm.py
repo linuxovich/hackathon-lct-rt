@@ -21,13 +21,13 @@ async def invoke_agent(text: str) -> LLMResponse:
 
 async def correct_texts(texts: list[str]):
     """Исправляет тексты из всех регионов"""
-    async with aiofiles.open("src/text_correction_prompt.txt", "r") as f:
+    async with aiofiles.open("src/region_correction.txt", "r") as f:
         prompt = await f.read()
     
     # Создаем динамическую модель для исправления текстов
     TextCorrectionModel = create_text_correction_model(len(texts))
     logger.info(f"TextCorrectionModel: {TextCorrectionModel}")
-    correction_model = ChatOllama(model=settings.llm.model, base_url=settings.llm.base_url, temperature=0.2)
+    correction_model = ChatOllama(model=settings.llm.model, base_url=settings.llm.base_url, temperature=0.2, num_thread=16, num_batch=1024, num_ctx=8192) 
     correction_model = correction_model.with_structured_output(TextCorrectionModel)
     
     # Создаем нумерованный список текстов для промпта
@@ -44,7 +44,7 @@ async def extract_named_entities(texts: list[str]):
     # Создаем динамическую модель для извлечения сущностей
     NamedEntitiesModel = create_named_entities_model(len(texts))
     logger.info(f"NamedEntitiesModel: {NamedEntitiesModel}")
-    entities_model = ChatOllama(model=settings.llm.model, base_url=settings.llm.base_url, temperature=0.6)
+    entities_model = ChatOllama(model=settings.llm.model, base_url=settings.llm.base_url, temperature=0.6, num_thread=16, num_batch=1024, num_ctx=8192)
     entities_model = entities_model.with_structured_output(NamedEntitiesModel)
     
     # Создаем нумерованный список текстов для промпта
@@ -85,7 +85,3 @@ async def invoke_multi_region_agent(texts: list[str]) -> MultiRegionLLMResponse:
         ))
     
     return MultiRegionLLMResponse(regions=regions)
-
-
-
-
